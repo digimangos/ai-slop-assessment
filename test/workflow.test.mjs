@@ -31,4 +31,12 @@ it("compiles only the bounded source tools and validated publication output", as
   assert.ok(
     manifest.actions.every((action) => /^[a-f0-9]{40}$/.test(action.sha)),
   );
+  assert.match(
+    lock,
+    /!cancelled\(\) && steps\.publish\.outputs\.report_validated == 'true'/,
+  );
+  assert.match(
+    lock,
+    /GH_AW_DETECTION_CONCLUSION: \$\{\{ needs\.detection\.outputs\.detection_conclusion \}\}/,
+  );
 });

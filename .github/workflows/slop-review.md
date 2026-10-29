@@ -51,11 +51,21 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
+      - name: Check trusted installation
+        id: installation
+        run: |
+          if test -f src/runtime.mjs; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Assessment unavailable: merge the trusted workflow helpers to the default branch before first use." >> "$GITHUB_STEP_SUMMARY"
+          fi
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
       - name: Collect immutable PR context without executing PR code
         id: prepare
+        if: steps.installation.outputs.ready == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           SLOP_MODEL_ENABLED: ${{ vars.SLOP_MODEL_ENABLED }}
@@ -64,6 +74,7 @@ jobs:
           SLOP_EVIDENCE: ${{ vars.SLOP_EVIDENCE_PATH }}
         run: node src/runtime.mjs prepare
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.prepare.outcome == 'success'
         with:
           name: slop-context
           path: .slop/
@@ -164,6 +175,7 @@ safe-outputs:
             GH_TOKEN: ${{ github.token }}
           run: node src/runtime.mjs finalise
         - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+          if: ${{ !cancelled() && steps.publish.outputs.report_validated == 'true' }}
           with:
             name: slop-pr-${{ steps.publish.outputs.pr_number }}
             path: |
@@ -282,3 +294,10 @@ using snapshot `base`), and a `compatibility` explanation. Keep excerpts minimal
 Never include credentials. The validated report includes a maintainer-copyable
 feedback request for high-confidence findings in complete reviews, not an
 automatic remediation action.
+
+A high-confidence correctness finding must name a supplied failed check using
+`execution_check` and explain its relevance to the alleged defect using
+`execution_relevance`. Set `regression: true` only if that check has comparable
+passing base evidence. Otherwise report source-only suspicions as medium/low
+confidence observations. A zero correctness score requires all available
+execution checks to pass; failing evidence without a supported finding is N/A.

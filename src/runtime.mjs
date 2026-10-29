@@ -1,6 +1,7 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { GitHub } from "./github.mjs";
+import { reserveSourceBytes, updateState } from "./state.mjs";
 import {
   CHECKLIST,
   compareHistory,
@@ -10,6 +11,7 @@ import {
   redact,
   render,
   requireThat,
+  sourceLines,
   validateAssessment,
 } from "./report.mjs";
 
@@ -17,13 +19,13 @@ const DIRECTORY =
   process.env.SLOP_DIRECTORY ||
   `${process.env.GITHUB_WORKSPACE || process.cwd()}/.slop`;
 let github;
-let ledgerWrite = Promise.resolve();
 
 function client() {
   github ??= new GitHub({
     repository: process.env.GITHUB_REPOSITORY,
     token: process.env.GH_TOKEN,
     api: process.env.GITHUB_API_URL || "https://api.github.com",
+    reserveBytes: (bytes) => reserveSourceBytes(DIRECTORY, bytes),
   });
   return github;
 }
@@ -163,16 +165,14 @@ export async function readSource({ path, snapshot, start_line, end_line }) {
     context.identity[`${snapshot}_sha`],
     context.configuration,
   );
-  const lines = source.split("\n");
-  requireThat(end_line <= lines.length, "Source range exceeds file");
+  const lines = sourceLines(source);
+  requireThat(start_line <= lines.length, "Source range starts beyond EOF");
+  end_line = Math.min(end_line, lines.length);
   if (snapshot === "head") {
-    ledgerWrite = ledgerWrite.then(async () => {
-      const ledger = await load("reads").catch(() => ({}));
+    await updateState(DIRECTORY, "reads", {}, (ledger) => {
       ledger[path] ??= { total_lines: lines.length, ranges: [] };
       ledger[path].ranges.push([start_line, end_line]);
-      await save("reads", ledger);
     });
-    await ledgerWrite;
   }
   return {
     path,
@@ -207,6 +207,10 @@ export async function listSources({ query = "", snapshot = "head" }) {
 }
 
 export async function finalise() {
+  requireThat(
+    process.env.GH_AW_DETECTION_CONCLUSION === "success",
+    "Publication requires an explicitly accepted threat-detection verdict",
+  );
   const context = await load("context");
   context.reads = await load("reads");
   const raw = JSON.parse(
@@ -228,6 +232,8 @@ export async function finalise() {
   compareHistory(report, previous);
   await save("report", report);
   await writeFile(`${DIRECTORY}/report.md`, render(report));
+  await output("report_validated", "true");
+  await output("pr_number", report.identity.pr);
   await publish(report);
 }
 
@@ -243,13 +249,11 @@ export async function publish(input) {
     assessed_families: report.overall.assessed,
   }))
     await output(key, value);
-  const event = JSON.parse(
-    await readFile(process.env.GITHUB_EVENT_PATH, "utf8"),
-  );
-  const fork =
-    event.pull_request &&
-    event.pull_request.head.repo?.full_name !== process.env.GITHUB_REPOSITORY;
-  if (fork) return { status: "skipped", reason: "fork-read-only-report" };
+  const context = await load("context");
+  if (context.fork) {
+    await output("publication_status", "skipped");
+    return { status: "skipped", reason: "fork-read-only-report" };
+  }
   const result = await client().publish(
     report,
     markdown,

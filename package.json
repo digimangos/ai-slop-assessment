@@ -8,7 +8,7 @@
   },
   "scripts": {
     "test": "node --test",
-    "check": "node --check src/report.mjs && node --check src/github.mjs && node --check src/runtime.mjs",
+    "check": "node --check src/report.mjs && node --check src/github.mjs && node --check src/runtime.mjs && node --check src/state.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

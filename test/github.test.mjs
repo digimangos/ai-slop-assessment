@@ -72,6 +72,31 @@ describe("GitHub source and publication boundaries", () => {
     assert.equal((await api.prepare(1)).truncated, true);
   });
 
+  it("does not mark pure renames or mode-only changes as incomplete", async () => {
+    const { api } = mock({
+      [`${ROOT}/pulls/1`]: { ...pr, changed_files: 2 },
+      [`${ROOT}/pulls/1/files?per_page=100&page=1`]: [
+        {
+          filename: "src/renamed.py",
+          status: "renamed",
+          additions: 0,
+          deletions: 0,
+        },
+        {
+          filename: "script.sh",
+          status: "modified",
+          additions: 0,
+          deletions: 0,
+        },
+      ],
+    });
+    const context = await api.prepare(1);
+    assert.equal(context.truncated, false);
+    assert.ok(
+      context.scope.every((file) => file.exclusion === "no textual changes"),
+    );
+  });
+
   it("reads only regular blobs from a fixed repository SHA and redacts secrets", async () => {
     const token = "ghp_" + "a".repeat(32);
     const { api, calls } = mock({
@@ -122,6 +147,82 @@ describe("GitHub source and publication boundaries", () => {
     );
     assert.equal(result.reason, "stale-head-or-base");
     assert.equal(calls.length, 1);
+  });
+
+  it("skips closed PRs at either recheck but rejects them for initial preparation", async () => {
+    for (const closeAt of [1, 2]) {
+      let reads = 0;
+      const { api, calls } = mock({
+        [`${ROOT}/pulls/1`]: () => ({
+          ...pr,
+          state: ++reads >= closeAt ? "closed" : "open",
+        }),
+        [`${ROOT}/issues/1/comments?per_page=100&page=1`]: [],
+      });
+      const result = await api.publish(
+        { identity: { pr: 1, head_sha: head, base_sha: base } },
+        "body",
+        "https://github.com/example/project/actions/runs/1",
+      );
+      assert.equal(result.reason, "closed-pr");
+      assert.ok(calls.every(({ options }) => !options.method));
+      await assert.rejects(api.prepare(1), /open PR/);
+    }
+  });
+
+  it("skips oversized comments rather than failing an otherwise valid report", async () => {
+    const { api, calls } = mock({
+      [`${ROOT}/pulls/1`]: pr,
+      [`${ROOT}/issues/1/comments?per_page=100&page=1`]: [],
+    });
+    const result = await api.publish(
+      { identity: { pr: 1, head_sha: head, base_sha: base } },
+      "a".repeat(60_001),
+      "https://github.com/example/project/actions/runs/1",
+    );
+    assert.equal(result.reason, "comment-size-budget-exceeded");
+    assert.ok(calls.every(({ options }) => !options.method));
+  });
+
+  it("reserves source budget before parallel fetches and releases failed retrievals", async () => {
+    const { api } = mock({
+      [`${ROOT}/git/trees/${head}?recursive=1`]: {
+        tree: [
+          {
+            path: "a.py",
+            type: "blob",
+            mode: "100644",
+            sha: "c".repeat(40),
+            size: 60_000,
+          },
+          {
+            path: "b.py",
+            type: "blob",
+            mode: "100644",
+            sha: "d".repeat(40),
+            size: 60_000,
+          },
+        ],
+      },
+      [`${ROOT}/git/blobs/${"c".repeat(40)}`]: {
+        encoding: "base64",
+        content: Buffer.alloc(60_000, "a").toString("base64"),
+      },
+      [`${ROOT}/git/blobs/${"d".repeat(40)}`]: {
+        encoding: "bad",
+        content: "",
+      },
+    });
+    api.readBytes = 940_000;
+    const results = await Promise.allSettled([
+      api.read("a.py", head),
+      api.read("b.py", head),
+    ]);
+    assert.equal(results.filter((r) => r.status === "fulfilled").length, 1);
+    assert.equal(api.readBytes, 1_000_000);
+    api.readBytes = 0;
+    await assert.rejects(api.read("b.py", head), /encoding/);
+    assert.equal(api.readBytes, 0);
   });
 
   it("updates only its maintained bot comment, ignoring forged human markers", async () => {

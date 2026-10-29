@@ -19,6 +19,7 @@ it("runs inventory, controlled concurrent reads, validation and publication with
     GITHUB_SERVER_URL: "https://github.com",
     GITHUB_RUN_ID: "123",
     GH_AW_AGENT_OUTPUT: `${directory}/agent.json`,
+    GH_AW_DETECTION_CONCLUSION: "success",
   };
   for (const [key, value] of Object.entries(environment)) {
     const previous = process.env[key];
@@ -46,6 +47,7 @@ it("runs inventory, controlled concurrent reads, validation and publication with
     JSON.stringify({ pull_request: pr }),
   );
   let published;
+  let publicationFails = false;
   t.mock.method(globalThis, "fetch", async (input, options) => {
     const url = new URL(input);
     const route = url.pathname + url.search;
@@ -83,6 +85,7 @@ it("runs inventory, controlled concurrent reads, validation and publication with
     if (route === `${root}/issues/1/comments?per_page=100&page=1`)
       return Response.json([]);
     if (route === `${root}/issues/1/comments` && options.method === "POST") {
+      if (publicationFails) return new Response(null, { status: 503 });
       published = JSON.parse(options.body).body;
       return Response.json({
         html_url: "https://github.com/example/project/pull/1#issuecomment-1",
@@ -107,9 +110,18 @@ it("runs inventory, controlled concurrent reads, validation and publication with
       path: "src/main.js",
       snapshot: "head",
       start_line: 2,
-      end_line: 3,
+      end_line: 120,
     }),
   ]);
+  const reads = JSON.parse(await readFile(`${directory}/reads.json`, "utf8"));
+  assert.equal(reads["src/main.js"].total_lines, 2);
+  assert.deepEqual(
+    reads["src/main.js"].ranges.sort((a, b) => a[0] - b[0]),
+    [
+      [1, 1],
+      [2, 2],
+    ],
+  );
   const draft = {
     schema_version: 1,
     status: "complete",
@@ -136,6 +148,12 @@ it("runs inventory, controlled concurrent reads, validation and publication with
       ],
     }),
   );
+  for (const verdict of ["", "warning", "failure", "skipped"]) {
+    process.env.GH_AW_DETECTION_CONCLUSION = verdict;
+    await assert.rejects(runtime.finalise(), /explicitly accepted/);
+    assert.equal(published, undefined);
+  }
+  process.env.GH_AW_DETECTION_CONCLUSION = "success";
   await runtime.finalise();
   const report = JSON.parse(await readFile(`${directory}/report.json`, "utf8"));
   assert.equal(report.status, "complete");
@@ -150,4 +168,41 @@ it("runs inventory, controlled concurrent reads, validation and publication with
     await readFile(environment.GITHUB_STEP_SUMMARY, "utf8"),
     /experimental/,
   );
+  publicationFails = true;
+  await writeFile(environment.GITHUB_OUTPUT, "");
+  await assert.rejects(runtime.finalise(), /503/);
+  assert.match(
+    await readFile(environment.GITHUB_OUTPUT, "utf8"),
+    /report_validated=true/,
+  );
+  assert.equal(
+    JSON.parse(await readFile(`${directory}/report.json`, "utf8")).status,
+    "complete",
+  );
+  assert.match(
+    await readFile(`${directory}/report.md`, "utf8"),
+    /experimental/,
+  );
+  await assert.rejects(
+    runtime.readSource({
+      path: "src/main.js",
+      snapshot: "head",
+      start_line: 3,
+      end_line: 120,
+    }),
+    /beyond EOF/,
+  );
+  const savedContext = JSON.parse(
+    await readFile(`${directory}/context.json`, "utf8"),
+  );
+  savedContext.fork = true;
+  await writeFile(`${directory}/context.json`, JSON.stringify(savedContext));
+  await writeFile(
+    environment.GITHUB_EVENT_PATH,
+    JSON.stringify({ inputs: { pr_number: "1" } }),
+  );
+  published = undefined;
+  const forkResult = await runtime.publish();
+  assert.equal(forkResult.reason, "fork-read-only-report");
+  assert.equal(published, undefined);
 });

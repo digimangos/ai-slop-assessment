@@ -18,7 +18,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   inventory:
-    if: vars.SLOP_MODEL_ENABLED != 'true' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+    if: github.event_name == 'workflow_dispatch' || vars.SLOP_MODEL_ENABLED != 'true' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -34,10 +34,20 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
+      - name: Check trusted installation
+        id: installation
+        run: |
+          if test -f src/runtime.mjs; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Assessment unavailable: merge the trusted workflow helpers to the default branch before first use." >> "$GITHUB_STEP_SUMMARY"
+          fi
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
       - id: prepare
+        if: steps.installation.outputs.ready == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           SLOP_MODEL_ENABLED: "false"
@@ -45,12 +55,12 @@ jobs:
           SLOP_EVIDENCE: ${{ vars.SLOP_EVIDENCE_PATH }}
         run: node src/runtime.mjs prepare
       - id: publish
-        if: steps.prepare.outputs.duplicate != 'true'
+        if: steps.prepare.outcome == 'success' && steps.prepare.outputs.duplicate != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: node src/runtime.mjs publish
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: steps.prepare.outputs.duplicate != 'true'
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' && steps.prepare.outputs.duplicate != 'true' }}
         with:
           name: slop-pr-${{ steps.prepare.outputs.pr_number }}
           path: |

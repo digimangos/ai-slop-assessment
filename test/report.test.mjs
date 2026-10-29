@@ -155,6 +155,55 @@ describe("scoring contract", () => {
     );
   });
 
+  it("rejects zero correctness with failed checks and requires relevant failure references for findings", async () => {
+    const ctx = context();
+    ctx.evidence = {
+      checks: [
+        { name: "types", kind: "types", result: "passed" },
+        { name: "unit", kind: "tests", result: "failed" },
+      ],
+    };
+    const input = draft();
+    input.categories.correctness = {
+      score: 0,
+      justification: "Reviewed execution results.",
+      checklist: CHECKLIST.correctness,
+      finding_ids: [],
+    };
+    await assert.rejects(
+      validateAssessment(input, ctx, async () => source),
+      /every available execution check/,
+    );
+    input.categories.correctness.score = 50;
+    input.categories.correctness.finding_ids = ["duplicate-conversion"];
+    input.findings.push({
+      ...finding(),
+      family: "correctness",
+      execution_check: "types",
+    });
+    await assert.rejects(
+      validateAssessment(input, ctx, async () => source),
+      /named failed execution check/,
+    );
+    input.findings[0].execution_check = "unit";
+    await assert.rejects(
+      validateAssessment(input, ctx, async () => source),
+      /execution evidence relevance/,
+    );
+    input.findings[0].execution_relevance =
+      "The failed trim edge-case test exercises the changed conversion.";
+    input.findings[0].regression = true;
+    await assert.rejects(
+      validateAssessment(input, ctx, async () => source),
+      /comparable passing base/,
+    );
+    ctx.evidence.checks[1].base_result = "passed";
+    const report = await validateAssessment(input, ctx, async () => source);
+    assert.equal(report.findings[0].execution_check, "unit");
+    assert.equal(report.findings[0].regression, true);
+    assert.equal(report.categories.correctness.score, 50);
+  });
+
   it("requires exact source evidence overlapping a changed hunk", async () => {
     const input = draft();
     input.findings.push(finding());
@@ -314,6 +363,56 @@ describe("evidence, scope, and reporting", () => {
     assert.equal(
       validateEvidence(evidence, identity).checks[0].base_result,
       "passed",
+    );
+  });
+
+  it("redacts base provenance with the same contract as head provenance", () => {
+    const identity = context().identity;
+    const evidence = validateEvidence(
+      {
+        schema_version: 1,
+        head_sha: identity.head_sha,
+        base_sha: identity.base_sha,
+        checks: [
+          {
+            name: "unit",
+            kind: "tests",
+            result: "failed",
+            provenance: "https://example.com/run?access_token=abcdefghijk",
+            base_result: "passed",
+            base_provenance:
+              "https://example.com/base?access_token=abcdefghijk",
+          },
+        ],
+      },
+      identity,
+    );
+    assert.doesNotMatch(JSON.stringify(evidence), /abcdefghijk/);
+    assert.match(evidence.checks[0].base_provenance, /REDACTED/);
+  });
+
+  it("preserves LF and CRLF coordinates when redacting multiline private keys", () => {
+    for (const newline of ["\n", "\r\n"]) {
+      const source = [
+        "before",
+        "-----BEGIN RSA PRIVATE KEY-----",
+        "private-value",
+        "-----END RSA PRIVATE KEY-----",
+        "after",
+      ].join(newline);
+      const cleaned = redact(source);
+      assert.equal(cleaned.split(newline).length, source.split(newline).length);
+      assert.equal(cleaned.split(newline)[4], "after");
+      assert.doesNotMatch(cleaned, /private-value/);
+    }
+  });
+
+  it("excludes generated workflow locks unless explicitly included", () => {
+    const filename = ".github/workflows/slop-review.lock.yml";
+    assert.equal(eligibility(filename), "generated or vendored");
+    assert.equal(
+      eligibility(filename, { include: [".github/workflows/*.lock.yml"] }),
+      null,
     );
   });
 

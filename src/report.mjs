@@ -39,7 +39,13 @@ export function redact(value) {
   return String(value)
     .replace(
       /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g,
-      "[REDACTED PRIVATE KEY]",
+      (key) =>
+        key
+          .split(/(\r?\n)/)
+          .map((part) =>
+            /^\r?\n$/.test(part) ? part : "[REDACTED PRIVATE KEY]",
+          )
+          .join(""),
     )
     .replace(
       /\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[A-Z0-9]{16})\b/g,
@@ -75,6 +81,7 @@ export function eligibility(filename, { include = [], exclude = [] } = {}) {
     return "sensitive file";
   if (matches(include)) return null;
   if (
+    /^\.github\/workflows\/[^/]+\.lock\.ya?ml$/i.test(filename) ||
     /(^|\/)(?:node_modules|vendor|dist|build|generated|coverage|\.git)(\/|$)/.test(
       filename,
     ) ||
@@ -133,7 +140,7 @@ export function validateEvidence(input, identity) {
         "Comparable base evidence requires the matching SHA and provenance",
       );
       result.base_result = check.base_result;
-      result.base_provenance = check.base_provenance;
+      result.base_provenance = text(check.base_provenance, "base provenance");
     }
     return result;
   });
@@ -171,6 +178,12 @@ export function aggregate(categories) {
     assessed: available.length,
     total: FAMILIES.length,
   };
+}
+
+export function sourceLines(source) {
+  const lines = source.split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  return lines;
 }
 
 export function deterministicReport(context) {
@@ -288,7 +301,7 @@ export async function validateAssessment(draft, context, readSource) {
     const key = `${input.snapshot}:${filename}`;
     if (!cache.has(key))
       cache.set(key, await readSource(filename, input.snapshot));
-    const lines = cache.get(key).split("\n");
+    const lines = sourceLines(cache.get(key));
     const excerpt = text(input.excerpt, "evidence excerpt");
     requireThat(
       input.end_line <= lines.length &&
@@ -327,15 +340,34 @@ export async function validateAssessment(draft, context, readSource) {
       correction: text(input.correction, "suggested correction"),
       location: await location(input.location, true),
     };
-    if (finding.family === "correctness" && finding.confidence === "high")
-      requireThat(
-        context.evidence?.checks.some(
-          (c) =>
-            ["build", "types", "tests"].includes(c.kind) &&
-            c.result !== "unavailable",
-        ),
-        "Source-only correctness suspicions must remain medium/low-confidence observations",
+    if (finding.family === "correctness" && finding.confidence === "high") {
+      const check = context.evidence?.checks.find(
+        (c) =>
+          c.name === input.execution_check &&
+          ["build", "types", "tests"].includes(c.kind) &&
+          c.result === "failed",
       );
+      requireThat(
+        check,
+        "High-confidence correctness requires a named failed execution check",
+      );
+      finding.execution_check = check.name;
+      finding.execution_relevance = text(
+        input.execution_relevance,
+        "execution evidence relevance",
+      );
+      requireThat(
+        input.regression === undefined || typeof input.regression === "boolean",
+        "Regression claim must be boolean",
+      );
+      if (input.regression) {
+        requireThat(
+          check.base_result === "passed",
+          "Regression requires comparable passing base evidence",
+        );
+        finding.regression = true;
+      }
+    }
     if (input.kind === "missed-reuse") {
       finding.kind = "missed-reuse";
       finding.existing = await location(input.existing);
@@ -377,6 +409,17 @@ export async function validateAssessment(draft, context, readSource) {
               c.result !== "unavailable",
           ),
           "Correctness requires supplied execution evidence",
+        );
+      if (id === "correctness" && input.score === 0)
+        requireThat(
+          context.evidence.checks
+            .filter(
+              (c) =>
+                ["build", "types", "tests"].includes(c.kind) &&
+                c.result !== "unavailable",
+            )
+            .every((c) => c.result === "passed"),
+          "Zero correctness score requires every available execution check to pass",
         );
     }
     const relevant = input.finding_ids.map((findingId) => {

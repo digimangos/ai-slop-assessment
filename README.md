@@ -11,12 +11,16 @@ rubric-based indices, not percentages of AI-generated or defective code.
 
 ```mermaid
 flowchart TD
-    PR[Open or updated PR / manual run] --> Scope[Trusted inventory: freeze head and base SHAs]
+    PR[Open or updated PR / manual run] --> Installed{Helpers installed on trusted default branch?}
+    Installed -->|No| Bootstrap[Skip with installation summary]
+    Installed -->|Yes| Scope[Trusted inventory: freeze head and base SHAs]
     Scope --> Evidence[Validate optional commit-bound CI evidence]
     Evidence --> Mode{Model explicitly enabled and same-repository PR?}
     Mode -->|No| Inventory[Deterministic inventory and exact duplicate candidates]
     Mode -->|Yes| Judge[Sandboxed Copilot: bounded source reads and path discovery]
-    Judge --> Validate[Separate safe-output job: validate source evidence and coverage]
+    Judge --> Detection{Explicit successful threat-detection verdict?}
+    Detection -->|No| Reject[Fail closed: no model report]
+    Detection -->|Yes| Validate[Separate safe-output job: validate source evidence and coverage]
     Inventory --> Score[Mechanical aggregation and compatible historical drift]
     Validate --> Score
     Score --> Head{Still current PR head and base?}
@@ -33,6 +37,8 @@ flowchart TD
 2. **Analysis** either stays deterministic or uses gh-aw's native Copilot engine.
    The judge gets only custom path-discovery, source-range, and context tools,
    with shell, editing, built-in GitHub tools, and general outbound access disabled.
+   Source-byte reservations and read coverage use shared, atomic state across
+   MCP subprocesses; concurrent tool calls cannot reset the one-megabyte budget.
 3. **Validation** runs separately from the judge. Exact excerpts must match
    immutable source ranges, findings must overlap changed code, and reviewed
    modules must have been fully read. Missed reuse also requires a base utility
@@ -40,7 +46,7 @@ flowchart TD
 4. **Scoring** averages available non-drift families only when at least three
    are assessable. Missing evidence is N/A, never a clean score. Compatible prior
    report artifacts provide per-family drift.
-5. **Publication** rechecks the PR head/base and updates one bot-authored report
+5. **Publication** rechecks the open PR head/base and updates one bot-authored report
    comment. Artifacts and summaries remain available when comments cannot be
    posted. Human-readable reports include a copyable, non-automatic Copilot
    feedback request where appropriate.
@@ -81,11 +87,14 @@ The initial distribution consists of:
 
 - `.github/workflows/slop-review.md` and its compiled `.lock.yml`;
 - `.github/workflows/slop-inventory.yml` for the non-model/fork path;
-- the three `src/*.mjs` helpers.
+- all `src/*.mjs` helpers, including the shared state module.
 
 Copy those files into the adopting repository, preserving their paths. Helpers
 must be on its **trusted default branch** before the assessment workflows run.
 This intentionally does not bootstrap itself by executing helpers from a PR.
+Before helpers are installed, inventory exits with an installation summary
+instead of failing. Explicit manual inventory runs remain available even when
+automatic model review is enabled.
 Once this repository is published, gh-aw can install the agentic source using
 `gh aw add OWNER/REPOSITORY/slop-review@REF`; the companion deterministic workflow
 and helpers must also be copied. A workflow-only installation is not sufficient.
@@ -160,6 +169,12 @@ Results are `passed`, `failed`, or `unavailable`. Head SHA and HTTPS provenance
 are required; comparable base results also require the matching base SHA and
 base provenance. Provenance is recorded, not independently attested.
 
+High-confidence correctness findings must name a failed check (`execution_check`)
+and explain its connection to the defect (`execution_relevance`). A
+`regression: true` claim additionally requires comparable passing base evidence.
+A zero correctness score requires every available execution check to pass;
+unexplained failures leave that category N/A rather than clean.
+
 The default PR trigger does not guess which CI workflows matter. To assess after
 CI, adapt the caller/inventory job to wait for your chosen checks and download
 their evidence artifact before `prepare`, or dispatch a run after supplying the
@@ -185,7 +200,8 @@ assessment, and failed execution. Optional absent CI/history is N/A. A real
 configuration/provider/validation error fails the job, not the PR's quality gate.
 Do not configure the experimental assessment as a required merge check.
 
-The publishing job receives write permission only after gh-aw's detection gate.
+The publishing job receives write permission only after gh-aw's detection gate
+and requires an explicit successful detection verdict before reading the draft.
 The model does not. Report text escapes injected markup and mentions; feedback
 requests appear in a code block for a maintainer to copy. No automatic agent
 assignment, workflow approval, fix request, or merge is implemented.
