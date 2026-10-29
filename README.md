@@ -83,7 +83,14 @@ assessable families there is no overall index.
 Requires GitHub.com Actions, Node.js 24 on the runner, and **gh-aw v1.0.1** for
 workflow compilation. No production npm dependencies are needed by the helpers.
 
-The initial distribution consists of:
+For pinned installation, use an **exact semver release** such as `v0.1.0` and
+verify its archive checksum, source commit, and per-file manifest before copying.
+[Release and installation instructions](docs/releases.md) explain the complete
+bundle, versioning policy, and tag-triggered publishing. This is a vendored
+workflow bundle, not a standalone `uses:` Action; do not pin a moving branch or
+mix helpers and workflows from different releases.
+
+The distribution consists of:
 
 - `.github/workflows/slop-review.md` and its compiled `.lock.yml`;
 - `.github/workflows/slop-inventory.yml` for the non-model/fork path;
@@ -95,8 +102,8 @@ This intentionally does not bootstrap itself by executing helpers from a PR.
 Before helpers are installed, inventory exits with an installation summary
 instead of failing. Explicit manual inventory runs remain available even when
 automatic model review is enabled.
-Once this repository is published, gh-aw can install the agentic source using
-`gh aw add OWNER/REPOSITORY/slop-review@REF`; the companion deterministic workflow
+gh-aw can install the agentic source using
+`gh aw add digimangos/ai-slop-assessment/slop-review@v0.1.0`; the companion deterministic workflow
 and helpers must also be copied. A workflow-only installation is not sufficient.
 
 Initially leave `SLOP_MODEL_ENABLED` unset: only deterministic analysis runs.
