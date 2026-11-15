@@ -80,11 +80,17 @@ it("uses the organisation token for both inference jobs without requiring a PAT"
     new URL("../.github/workflows/slop-org.lock.yml", import.meta.url),
     "utf8",
   );
+  const bootstrap = await readFile(
+    new URL("../.github/actions/bootstrap/action.yml", import.meta.url),
+    "utf8",
+  );
   const manifest = JSON.parse(worker.match(/^# gh-aw-manifest: (.+)$/m)[1]);
   assert.match(caller, /GITHUB_EVENT_NAME.*pull_request_target/);
   assert.match(caller, /uses: \$\/\.github\/workflows\/slop-org\.lock\.yml/);
   assert.match(caller, /copilot-requests: write/);
   assert.ok(!caller.includes("COPILOT_GITHUB_TOKEN"));
+  assert.match(bootstrap, /slop-org\.md/);
+  assert.match(bootstrap, /slop-org\.lock\.yml/);
   for (const name of ["agent", "detection"]) {
     const job = worker.split(`  ${name}:\n`)[1]?.split(/^  [\w-]+:\n/m)[0];
     assert.ok(job, `Missing ${name} job`);

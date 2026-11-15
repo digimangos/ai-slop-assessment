@@ -9,4 +9,4 @@ runs:
       run: |
         mkdir -p "$RUNNER_TEMP/slop-runtime/.github/workflows"
         cp "$ACTION_DIRECTORY"/../../../src/*.mjs "$RUNNER_TEMP/slop-runtime/"
-        cp "$ACTION_DIRECTORY"/../../../.github/workflows/slop-public.md "$ACTION_DIRECTORY"/../../../.github/workflows/slop-public.lock.yml "$RUNNER_TEMP/slop-runtime/.github/workflows/"
+        cp "$ACTION_DIRECTORY"/../../../.github/workflows/slop-public.md "$ACTION_DIRECTORY"/../../../.github/workflows/slop-public.lock.yml "$ACTION_DIRECTORY"/../../../.github/workflows/slop-org.md "$ACTION_DIRECTORY"/../../../.github/workflows/slop-org.lock.yml "$RUNNER_TEMP/slop-runtime/.github/workflows/"
