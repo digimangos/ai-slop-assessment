@@ -1,129 +1,42 @@
-# Exact-version releases
+# Releases
 
-This is a **vendored gh-aw workflow bundle**, not a standalone GitHub Action.
-`uses: digimangos/ai-slop-assessment@v0.1.0` is not an installation.
-Each release contains:
-
-- the gh-aw Markdown source and compiled `slop-review.lock.yml`;
-- the companion deterministic `slop-inventory.yml`;
-- **all** `src/**/*.mjs` helpers, preserving their paths;
-- `package.json`, optional `.github/aw/actions-lock.json`, and
-  `release-manifest.json` with the exact source commit and per-file SHA256 hashes.
-
-Archives made from commits containing `LICENSE` include the ISC licence.
-Earlier archives without that file remain verifiable.
-
-The only published assets are `ai-slop-rating-vMAJOR.MINOR.PATCH.tar.gz` and
-`SHA256SUMS`. The archive contains regular files only: no dependencies, repository
-history, tests, release workflow, installer, or local working-tree changes.
-Requires Node.js 24 and Git for packaging; verification needs only Node.js 24.
-No npm install is needed.
+The product is the reusable workflow
+`.github/workflows/assess.yml` and the files it loads from the same Git commit.
+Consumers should pin the workflow to the full commit SHA associated with an
+exact release, as shown in the [installation guide](../README.md#install-the-reusable-workflow).
+No vendored bundle or separate installer is required.
 
 ## Publishing
 
-Before the first release, a repository administrator must enable **immutable
-releases** in repository settings. Protect `v*` tags with a ruleset restricting
-creation to release maintainers and preventing updates/deletions. Enable required
-CI on the default branch. The release workflow checks that the tagged commit is
-on default-branch history; only tag trusted, reviewed commits with passing CI.
+A maintainer starts the **Publish exact-version release** workflow manually;
+merging a change or pushing a tag does not publish a release. Before running it:
 
-1. Update `package.json` to an exact `MAJOR.MINOR.PATCH` version, and update its
-   lockfile. Use patch for compatible fixes, minor for compatible additions, and
-   major for breaking workflow/helper/report contracts.
-2. Run the normal CI checks, compile with the pinned gh-aw compiler, and merge
-   the complete release preparation into the trusted default branch.
-3. From that reviewed commit, create and push the matching annotated tag:
+1. Enable immutable releases in the repository settings and protect release
+   tags against modification or deletion. Restrict who can trigger releases.
+2. Set `package.json` and `package-lock.json` to the intended exact semantic
+   version and merge the reviewed changes to the default branch. The intended
+   first public version is `1.0.0`.
+3. Check that the default branch has passing CI. From the Actions tab, run the
+   workflow on the default branch with the matching tag, for example `v1.0.0`,
+   and confirm that immutable releases are enabled. Alternatively:
 
    ```sh
-   git tag -a v0.1.0 -m "Release v0.1.0" <REVIEWED_COMMIT_SHA>
-   git push origin refs/tags/v0.1.0
+   gh workflow run release.yml --ref main -f tag=v1.0.0 -f immutable_confirmed=true
    ```
 
-`release.yml` accepts only `vMAJOR.MINOR.PATCH` tag pushes, without leading zeroes,
-prerelease suffixes, or build metadata. It tests the packaging, requires the tag
-to match the committed package version, and packages only that Git snapshot.
-The read-only packaging job passes assets to a separate publisher: only that job
-has `contents: write`. It uses the standard `GITHUB_TOKEN`, not a release PAT.
-It creates a draft with both assets, publishes it, then checks GitHub's immutable
-release flag. It never replaces existing assets, reuses a release, or moves `v1`
-or other major tags. Already-created releases fail rather than being overwritten.
+The workflow validates the tag, version and branch; runs offline checks and
+verifies the compiled workflow; then rechecks the default-branch head. A separate
+write-enabled job creates an annotated tag at that exact commit, verifies it,
+and publishes a GitHub release. Existing tags are never moved or overwritten.
+After publication it verifies GitHub reports the release as immutable.
 
-GitHub's immutability setting is an **administrative prerequisite**: the workflow
-cannot enable/read that repository setting with a contents-only token. Its
-post-publication check fails if the setting was omitted, but a mutable release
-will already exist in that case. Stop distribution, enable the setting, and
-publish a new patch version; never silently replace the old version.
-If publication fails while still a draft, inspect it manually; retries do not
-delete or overwrite drafts.
+The immutability confirmation is an administrative prerequisite, not a
+programmatic preflight: the Actions token may not have permission to read that
+repository setting. If immutability is disabled, a mutable release can already
+exist when the final check fails. Stop distribution, enable the setting and
+publish a new version; never silently replace the existing release.
 
-## Package and validate locally
-
-Run the packaging tool from a trusted checkout. Both the Git ref and a **new**
-output directory are mandatory. The output's parent directory must exist.
-
-```sh
-mkdir -p dist
-node scripts/release.mjs pack --ref refs/tags/v0.1.0 --out dist/v0.1.0
-node scripts/release.mjs verify \
-  --archive dist/v0.1.0/ai-slop-rating-v0.1.0.tar.gz \
-  --checksums dist/v0.1.0/SHA256SUMS \
-  --version v0.1.0 --commit <REVIEWED_COMMIT_SHA>
-```
-
-An explicit commit or branch ref also works for local packaging. Add
-`--version v0.1.0` to require its package version to match an expected release.
-Omitting `--ref` is an error; there is no implicit `HEAD`. Output creation is exclusive; nothing is deleted or
-overwritten. The same ref produces byte-identical archives. Verification checks
-the compressed checksum, exact expected version/optional commit, required files,
-package metadata, the manifest's complete payload hashes, and the canonical
-archive structure. Unknown paths, duplicates, links, traversal, extra archives,
-invalid tar headers, and oversized archives are rejected.
-
-## Pin and install in another repository
-
-Choose an **exact** published version, not `latest`, a branch, or a moving major
-tag. Use a trusted checkout of that release's source for the verifier; do not
-execute a verifier or any other code extracted from an unverified archive.
-Record the reviewed 40-character source commit independently of the downloaded
-manifest. For example, from a trusted source checkout:
-
-```sh
-mkdir release-download
-gh release download v0.1.0 --repo digimangos/ai-slop-assessment \
-  --pattern ai-slop-rating-v0.1.0.tar.gz --pattern SHA256SUMS \
-  --dir release-download
-node scripts/release.mjs verify \
-  --archive release-download/ai-slop-rating-v0.1.0.tar.gz \
-  --checksums release-download/SHA256SUMS \
-  --version v0.1.0 --commit <REVIEWED_COMMIT_SHA>
-mkdir release-download/unpacked
-tar -xzf release-download/ai-slop-rating-v0.1.0.tar.gz \
-  -C release-download/unpacked
-```
-
-After verification, manually copy **only** the three assessment workflow files,
-all `src/` modules, and optional `.github/aw/actions-lock.json` into the adopting
-repository at those same relative paths. Do not copy upstream `package.json`
-over the consumer's package manifest. Retain the bundled `LICENSE` notice when
-redistributing the files. Keep `release-manifest.json` as a pin
-record (for example `.github/slop-release-manifest.json`). Inspect existing files
-and path collisions before copying; there is deliberately no overwrite installer
-or install hook, and extraction does not execute bundled code.
-
-Review the vendored changes in a PR, then merge **helpers and workflows together
-onto the trusted default branch before running assessments**. Do not change the
-default-branch checkouts to a PR head, execute proposed PR code, or add
-`pull_request_target` bootstrap logic. A Markdown-only `gh aw add ...@v0.1.0`
-does not install the companion workflow or helpers and is insufficient.
-
-The compiled lock is included; compilation is only needed if customising its
-Markdown source, using the repository's pinned gh-aw compiler/action revision.
-Follow the main README for configuration and optional model authentication;
-release installation/publication itself needs no PAT, while optional model
-authentication is a separate concern.
-
-Upgrade by repeating verification and reviewing the complete new bundle. Retain
-the exact tag/commit/manifest in the consumer's history; rollback by restoring
-the prior complete bundle. Never mix helpers and workflows from different
-releases. SHA256 detects corruption, not publisher identity: trust the repository,
-reviewed commit, immutable release origin, and downloaded verifier separately.
+If publication fails after creating the tag, inspect the tag and any draft
+release before taking further action. A rerun will not overwrite the tag.
+Consumers should independently verify the release commit before pinning it;
+do not use a moving branch or tag as a substitute for an immutable SHA.

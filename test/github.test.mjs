@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { GitHub, reportFromZip } from "../src/github.mjs";
-import { deterministicReport } from "../src/report.mjs";
+import { createReport } from "../src/report.mjs";
 
 const head = "a".repeat(40);
 const base = "b".repeat(40);
@@ -41,7 +41,95 @@ const files = [
   },
 ];
 
+function reportZip(report) {
+  const name = Buffer.from("report.json");
+  const content = Buffer.from(JSON.stringify(report));
+  const local = Buffer.alloc(30);
+  local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt16LE(name.length, 26);
+  const entry = Buffer.alloc(46);
+  entry.writeUInt32LE(0x02014b50, 0);
+  entry.writeUInt32LE(content.length, 20);
+  entry.writeUInt32LE(content.length, 24);
+  entry.writeUInt16LE(name.length, 28);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(1, 10);
+  end.writeUInt32LE(local.length + name.length + content.length, 16);
+  return Buffer.concat([local, name, content, entry, name, end]);
+}
+
 describe("GitHub source and publication boundaries", () => {
+  it("loads history only from the current trusted caller workflow", async () => {
+    const report = {
+      schema_version: 1,
+      mode: "model",
+      model: "fixture",
+      input_key: "c".repeat(64),
+      identity: { repository: "example/project", pr: 1 },
+      configuration: {},
+      categories: {},
+      scope: [],
+    };
+    const current = {
+      path: ".github/workflows/review.yml",
+      event: "pull_request_target",
+      repository: { full_name: "example/project" },
+    };
+    const successful = {
+      ...current,
+      head_repository: { full_name: "example/project" },
+      status: "completed",
+      conclusion: "success",
+    };
+    const calls = [];
+    const api = new GitHub({
+      repository: "example/project",
+      token: "test-token",
+      request: async (url, options) => {
+        const parsed = new URL(url);
+        const route = parsed.pathname + parsed.search;
+        calls.push(route);
+        if (parsed.hostname === "artifacts.example") {
+          assert.equal(options.headers?.Authorization, undefined);
+          return new Response(reportZip(report));
+        }
+        if (route === `${ROOT}/actions/artifacts?name=slop-pr-1&per_page=30`)
+          return Response.json({
+            artifacts: [1, 2, 3].map((id) => ({
+              id,
+              size_in_bytes: 100,
+              workflow_run: { id },
+            })),
+          });
+        if (route === `${ROOT}/actions/runs/99`) return Response.json(current);
+        if (route === `${ROOT}/actions/runs/1`)
+          return Response.json({
+            ...successful,
+            path: ".github/workflows/other.yml",
+          });
+        if (route === `${ROOT}/actions/runs/2`)
+          return Response.json({ ...successful, event: "pull_request" });
+        if (route === `${ROOT}/actions/runs/3`)
+          return Response.json(successful);
+        if (route === `${ROOT}/actions/artifacts/3/zip`) {
+          assert.equal(options.redirect, "manual");
+          return new Response(null, {
+            status: 302,
+            headers: { location: "https://artifacts.example/report.zip" },
+          });
+        }
+        throw new Error(`Unexpected request ${route}`);
+      },
+    });
+    assert.deepEqual(
+      await api.history(1, "99", { model: "fixture", configuration: {} }),
+      report,
+    );
+    assert.ok(!calls.includes(`${ROOT}/actions/artifacts/1/zip`));
+    assert.ok(!calls.includes(`${ROOT}/actions/artifacts/2/zip`));
+  });
+
   it("collects immutable scope and rejects PRs changing during collection", async () => {
     const { api } = mock({
       [`${ROOT}/pulls/1`]: pr,
@@ -241,7 +329,7 @@ describe("GitHub source and publication boundaries", () => {
         html_url: "https://github.com/example/project/pull/1#issuecomment-3",
       },
     });
-    const report = deterministicReport({
+    const report = createReport({
       identity: {
         repository: "example/project",
         pr: 1,

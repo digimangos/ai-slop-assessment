@@ -46,8 +46,11 @@ export class GitHub {
           "Source byte budget exhausted",
         );
         this.readBytes += bytes;
-        return () => {
-          this.readBytes -= bytes;
+        return {
+          commit: () => {},
+          release: () => {
+            this.readBytes -= bytes;
+          },
         };
       });
   }
@@ -117,7 +120,7 @@ export class GitHub {
         entry.size <= MAX_SOURCE_BYTES,
       "Source missing, oversized, symlink, or non-regular file",
     );
-    const release = await this.reserveBytes(entry.size);
+    const reservation = await this.reserveBytes(entry.size, key);
     try {
       const blob = await this.json(`${this.root}/git/blobs/${entry.sha}`);
       requireThat(blob.encoding === "base64", "Unsupported blob encoding");
@@ -129,10 +132,11 @@ export class GitHub {
         "Binary, oversized source, or blob size mismatch",
       );
       const value = redact(buffer.toString("utf8"));
+      await reservation.commit();
       this.sources.set(key, value);
       return value;
     } catch (error) {
-      await release();
+      await reservation.release();
       throw error;
     }
   }
@@ -284,23 +288,36 @@ export class GitHub {
     }
   }
 
-  async history(number) {
+  async history(number, currentRunId, { model, configuration }) {
     const name = `slop-pr-${number}`;
     const artifacts = await this.json(
       `${this.root}/actions/artifacts?name=${encodeURIComponent(name)}&per_page=30`,
     );
-    for (const artifact of artifacts.artifacts.slice(0, 30)) {
-      if (artifact.expired || artifact.size_in_bytes > MAX_ARTIFACT_BYTES)
-        continue;
+    const candidates = artifacts.artifacts
+      .slice(0, 30)
+      .filter(
+        (artifact) =>
+          !artifact.expired && artifact.size_in_bytes <= MAX_ARTIFACT_BYTES,
+      );
+    if (!candidates.length) return null;
+    requireThat(/^[0-9]+$/.test(currentRunId ?? ""), "Invalid workflow run ID");
+    const current = await this.json(
+      `${this.root}/actions/runs/${currentRunId}`,
+    );
+    requireThat(
+      current.event === "pull_request_target" &&
+        /^\.github\/workflows\/[A-Za-z0-9_.-]+\.ya?ml$/.test(current.path) &&
+        current.repository?.full_name.toLowerCase() ===
+          this.repository.toLowerCase(),
+      "Invalid current assessment workflow",
+    );
+    for (const artifact of candidates) {
       const run = await this.json(
         `${this.root}/actions/runs/${artifact.workflow_run.id}`,
       );
       if (
-        ![
-          ".github/workflows/slop-review.lock.yml",
-          ".github/workflows/assess.yml",
-          ".github/workflows/slop-inventory.yml",
-        ].includes(run.path) ||
+        run.path !== current.path ||
+        run.event !== current.event ||
         run.repository.full_name.toLowerCase() !==
           this.repository.toLowerCase() ||
         run.head_repository?.full_name.toLowerCase() !==
@@ -342,10 +359,18 @@ export class GitHub {
       const report = JSON.parse(reportFromZip(Buffer.concat(chunks)));
       if (
         report.schema_version === 1 &&
+        report.mode === "model" &&
+        report.model === model &&
+        /^[a-f0-9]{64}$/.test(report.input_key ?? "") &&
         report.identity?.repository === this.repository &&
         report.identity?.pr === number &&
+        report.configuration !== null &&
+        typeof report.configuration === "object" &&
+        !Array.isArray(report.configuration) &&
+        fingerprint(report.configuration) === fingerprint(configuration) &&
         report.categories &&
-        Array.isArray(report.scope)
+        Array.isArray(report.scope) &&
+        report.scope.every((file) => typeof file?.path === "string")
       )
         return report;
     }

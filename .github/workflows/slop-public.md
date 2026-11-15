@@ -60,9 +60,7 @@ jobs:
         id: prepare
         env:
           GH_TOKEN: ${{ github.token }}
-          SLOP_MODEL_ENABLED: "true"
           SLOP_MODEL: ${{ inputs.model }}
-          SLOP_APPROVED_FORKS: "true"
         run: node "$RUNNER_TEMP/slop-runtime/runtime.mjs" prepare
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: steps.prepare.outcome == 'success'
@@ -278,6 +276,8 @@ positive score must reference high-confidence supported finding IDs in that
 family; medium/low observations cannot penalise scores. Use null for a category
 whose coverage checklist cannot be met. No category scores are allowed unless
 all eligible source was reviewed. A zero is not proof of defect-free code.
+An assessed category's score cannot be lower than the severity of any of its
+high-confidence findings: minor 25, material 50, severe 75, critical 100.
 The publisher calculates the rounded equal-weight mean only with at least three
 available families, and derives compatible historical drift separately.
 

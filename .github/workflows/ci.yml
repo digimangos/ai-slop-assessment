@@ -24,6 +24,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh aw compile slop-review --no-check-update --action-mode release --action-tag 0627fdbe4beb5f3b71aa569f8d97150b87f2111a
           gh aw compile slop-public --no-check-update --action-mode release --action-tag 0627fdbe4beb5f3b71aa569f8d97150b87f2111a
-          git diff --exit-code -- .github/workflows/slop-review.lock.yml .github/workflows/slop-public.lock.yml
+          git diff --exit-code -- .github/workflows/slop-public.lock.yml

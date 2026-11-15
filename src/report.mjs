@@ -10,6 +10,7 @@ export const FAMILIES = [
   "reliability",
 ];
 export const ANCHORS = [0, 25, 50, 75, 100];
+const SEVERITY_FLOOR = { minor: 25, material: 50, severe: 75, critical: 100 };
 export const CHECKLIST = {
   redundancy: ["changed-behaviour", "reuse-context"],
   complexity: ["changed-control-flow", "coupling-context"],
@@ -38,7 +39,7 @@ export function sourcePath(value) {
 export function redact(value) {
   return String(value)
     .replace(
-      /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g,
+      /-----BEGIN [^-]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?-----END [^-]*PRIVATE KEY(?: BLOCK)?-----/g,
       (key) =>
         key
           .split(/(\r?\n)/)
@@ -48,7 +49,7 @@ export function redact(value) {
           .join(""),
     )
     .replace(
-      /\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[A-Z0-9]{16})\b/g,
+      /\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[A-Z0-9]{16}|glpat-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[A-Za-z0-9_-]{35})(?![A-Za-z0-9_-])/g,
       "[REDACTED]",
     )
     .replace(
@@ -73,10 +74,13 @@ export function eligibility(filename, { include = [], exclude = [] } = {}) {
     patterns.some((p) => path.matchesGlob(filename, p));
   if (matches(exclude)) return "configured exclusion";
   if (
-    /(^|\/)(?:\.env(?:\..*)?|id_rsa|id_ed25519|credentials|secrets?\.(?:json|ya?ml))$/i.test(
+    /(^|\/)(?:\.env(?:\..*)?|\.npmrc|\.netrc|\.pypirc|\.htpasswd|\.git-credentials|id_rsa|id_ed25519|id_ecdsa|id_dsa|credentials|secrets?\.(?:json|ya?ml))$/i.test(
       filename,
     ) ||
-    /\.(?:pem|key|p12|pfx)$/i.test(filename)
+    /(^|\/)(?:\.docker|docker)\/config\.json$/i.test(filename) ||
+    /\.(?:pem|key|p12|pfx|jks|keystore|tfstate|tfstate\.backup|tfvars|tfvars\.json)$/i.test(
+      filename,
+    )
   )
     return "sensitive file";
   if (matches(include)) return null;
@@ -181,37 +185,23 @@ export function aggregate(categories) {
 }
 
 export function sourceLines(source) {
-  const lines = source.split("\n");
+  const lines = source.replace(/\r\n/g, "\n").split("\n");
   if (lines.at(-1) === "") lines.pop();
   return lines;
 }
 
-export function deterministicReport(context) {
+export function createReport(context) {
   const categories = Object.fromEntries(
     FAMILIES.map((id) => [
       id,
       {
         score: null,
-        justification: "Semantic assessment unavailable in deterministic mode.",
+        justification: "Assessment unavailable.",
         checklist: [],
         finding_ids: [],
       },
     ]),
   );
-  const execution = context.evidence?.checks.filter(
-    (c) =>
-      ["build", "types", "tests"].includes(c.kind) &&
-      c.result !== "unavailable",
-  );
-  if (execution?.length && execution.every((c) => c.result === "passed")) {
-    categories.correctness = {
-      score: 0,
-      justification:
-        "Supplied execution checks passed. This does not establish untested correctness.",
-      checklist: ["execution-evidence"],
-      finding_ids: [],
-    };
-  }
   return {
     schema_version: 1,
     rubric: RUBRIC,
@@ -219,7 +209,7 @@ export function deterministicReport(context) {
     model: context.model,
     configuration: context.configuration,
     input_key: context.input_key,
-    mode: "deterministic",
+    mode: "model",
     status: context.truncated ? "partial" : "unavailable",
     experimental: true,
     categories,
@@ -439,6 +429,13 @@ export async function validateAssessment(draft, context, readSource) {
         !findings.some((f) => f.family === id && f.confidence === "high"),
       "Zero cannot conceal high-confidence findings",
     );
+    if (input.score !== null)
+      requireThat(
+        findings
+          .filter((f) => f.family === id && f.confidence === "high")
+          .every((f) => input.score >= SEVERITY_FLOOR[f.severity]),
+        "Category score cannot be lower than a high-confidence finding's severity",
+      );
     categories[id] = {
       score: input.score,
       justification: text(input.justification, "category justification"),
@@ -446,8 +443,7 @@ export async function validateAssessment(draft, context, readSource) {
       finding_ids: [...new Set(input.finding_ids)],
     };
   }
-  const report = deterministicReport(context);
-  report.mode = "model";
+  const report = createReport(context);
   report.status =
     context.truncated || reviewed.size !== eligible.length
       ? "partial"
@@ -466,14 +462,20 @@ export function compareHistory(report, previous) {
   if (!previous) return report;
   const compatible =
     previous.schema_version === report.schema_version &&
+    previous.mode === report.mode &&
     previous.rubric === report.rubric &&
     previous.model === report.model &&
     previous.identity?.repository === report.identity.repository &&
     previous.identity?.pr === report.identity.pr &&
     previous.identity?.base_sha === report.identity.base_sha &&
     previous.identity?.head_sha !== report.identity.head_sha &&
+    previous.configuration !== null &&
+    typeof previous.configuration === "object" &&
+    !Array.isArray(previous.configuration) &&
+    Array.isArray(previous.scope) &&
+    previous.scope.every((file) => typeof file?.path === "string") &&
     fingerprint(previous.configuration) === fingerprint(report.configuration) &&
-    fingerprint(previous.scope?.map((f) => f.path).sort()) ===
+    fingerprint(previous.scope.map((f) => f.path).sort()) ===
       fingerprint(report.scope.map((f) => f.path).sort());
   if (!compatible) {
     report.drift = {

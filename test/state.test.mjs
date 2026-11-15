@@ -22,7 +22,8 @@ it("preserves source ranges and byte reservations across concurrent MCP processe
       ledger["src/main.js"].ranges.push([index, index]);
     });
     try {
-      await reserveSourceBytes(directory, 100000);
+      const reservation = await reserveSourceBytes(directory, 100000, "source-" + index);
+      await reservation.commit();
       console.log("reserved");
     } catch (error) {
       if (!error.message.includes("budget exhausted")) throw error;
@@ -64,9 +65,60 @@ it("preserves source ranges and byte reservations across concurrent MCP processe
 it("releases a failed retrieval reservation so another process can use the budget", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "slop-release-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const release = await reserveSourceBytes(directory, 1_000_000);
-  await assert.rejects(reserveSourceBytes(directory, 1), /budget exhausted/);
-  await release();
-  await release();
-  await reserveSourceBytes(directory, 1_000_000);
+  const reservation = await reserveSourceBytes(directory, 1_000_000, "source");
+  await assert.rejects(
+    reserveSourceBytes(directory, 1, "other"),
+    /budget exhausted/,
+  );
+  await reservation.release();
+  await reservation.release();
+  await reserveSourceBytes(directory, 1_000_000, "other");
+});
+
+it("charges repeated concurrent reads once and isolates inventory from model review", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "slop-budget-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const inventory = await reserveSourceBytes(
+    directory,
+    1_000_000,
+    "inventory-file",
+    "inventory-budget",
+  );
+  await inventory.commit();
+  const reservations = await Promise.all(
+    Array.from({ length: 20 }, () =>
+      reserveSourceBytes(directory, 60_000, "same-snapshot-file"),
+    ),
+  );
+  await Promise.all(
+    reservations.map((reservation, index) =>
+      index === 0 ? reservation.commit() : reservation.release(),
+    ),
+  );
+  const repeated = await reserveSourceBytes(
+    directory,
+    60_000,
+    "same-snapshot-file",
+  );
+  await repeated.commit();
+  const script = `
+    const { reserveSourceBytes } = await import(process.argv[1]);
+    const reservation = await reserveSourceBytes(process.argv[2], 60000, "same-snapshot-file");
+    await reservation.commit();
+  `;
+  await Promise.all(
+    Array.from({ length: 12 }, () =>
+      execute(process.execPath, [
+        "--input-type=module",
+        "-e",
+        script,
+        moduleUrl,
+        directory,
+      ]),
+    ),
+  );
+  assert.equal(
+    JSON.parse(await readFile(`${directory}/budget.json`, "utf8")).bytes,
+    60_000,
+  );
 });

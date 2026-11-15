@@ -10,7 +10,6 @@ it("runs inventory, controlled concurrent reads, validation and publication with
   t.after(() => rm(directory, { recursive: true, force: true }));
   const environment = {
     SLOP_DIRECTORY: directory,
-    SLOP_MODEL_ENABLED: "true",
     SLOP_MODEL: "fixture-model",
     GITHUB_REPOSITORY: "example/project",
     GITHUB_EVENT_PATH: `${directory}/event.json`,
@@ -20,8 +19,7 @@ it("runs inventory, controlled concurrent reads, validation and publication with
     GITHUB_RUN_ID: "123",
     GH_AW_AGENT_OUTPUT: `${directory}/agent.json`,
     GH_AW_DETECTION_CONCLUSION: "success",
-    GITHUB_EVENT_NAME: "pull_request",
-    SLOP_APPROVED_FORKS: "false",
+    GITHUB_EVENT_NAME: "pull_request_target",
   };
   for (const [key, value] of Object.entries(environment)) {
     const previous = process.env[key];
@@ -96,6 +94,9 @@ it("runs inventory, controlled concurrent reads, validation and publication with
     throw new Error(`Unexpected API request: ${route}`);
   });
   const runtime = await import("../src/runtime.mjs?integration");
+  process.env.GITHUB_EVENT_NAME = "pull_request";
+  await assert.rejects(runtime.prepare(), /trusted pull_request_target/);
+  process.env.GITHUB_EVENT_NAME = "pull_request_target";
   await runtime.prepare();
   const scope = await runtime.reviewContext();
   assert.equal(scope.identity.head_sha, head);
@@ -251,7 +252,6 @@ it("runs inventory, controlled concurrent reads, validation and publication with
   pr.head.repo.full_name = "contributor/project";
   pr.labels = [];
   process.env.GITHUB_EVENT_NAME = "pull_request_target";
-  process.env.SLOP_APPROVED_FORKS = "true";
   await writeFile(
     environment.GITHUB_EVENT_PATH,
     JSON.stringify({ pull_request: pr }),
