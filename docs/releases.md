@@ -1,7 +1,7 @@
 # Releases
 
-The product is the reusable workflow
-`.github/workflows/assess.yml` and the files it loads from the same Git commit.
+The product is the reusable workflows `.github/workflows/assess.yml` and
+`.github/workflows/assess-org.yml` and the files they load from the same Git commit.
 Consumers should pin the workflow to the full commit SHA associated with an
 exact release, as shown in the [installation guide](../README.md#install-the-reusable-workflow).
 No vendored bundle or separate installer is required.
@@ -14,14 +14,13 @@ merging a change or pushing a tag does not publish a release. Before running it:
 1. Enable immutable releases in the repository settings and protect release
    tags against modification or deletion. Restrict who can trigger releases.
 2. Set `package.json` and `package-lock.json` to the intended exact semantic
-   version and merge the reviewed changes to the default branch. The intended
-   first public version is `1.0.0`.
+   version and merge the reviewed changes to the default branch.
 3. Check that the default branch has passing CI. From the Actions tab, run the
-   workflow on the default branch with the matching tag, for example `v1.0.0`,
+   workflow on the default branch with the matching tag, for example `v1.1.0`,
    and confirm that immutable releases are enabled. Alternatively:
 
    ```sh
-   gh workflow run release.yml --ref main -f tag=v1.0.0 -f immutable_confirmed=true
+   gh workflow run release.yml --ref main -f tag=v1.1.0 -f immutable_confirmed=true
    ```
 
 The workflow validates the tag, version and branch; runs offline checks and

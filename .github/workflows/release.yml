@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Exact release tag matching package.json (for example v1.0.0)
+        description: Exact release tag matching package.json (for example v1.1.0)
         required: true
         type: string
       immutable_confirmed:

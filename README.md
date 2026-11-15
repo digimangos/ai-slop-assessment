@@ -126,7 +126,7 @@ to the chosen model. See [GitHub's setup instructions](https://docs.github.com/e
 
 Add the caller below to the consuming repository's trusted default branch.
 Replace `<RELEASE_COMMIT_SHA>` with the full SHA of a release containing
-`.github/workflows/assess-org.yml`. This workflow is not present in v1.0.0.
+`.github/workflows/assess-org.yml`.
 The caller grants the permission to the nested workflow; it does not pass a PAT:
 
 ```yaml
