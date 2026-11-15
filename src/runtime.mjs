@@ -91,7 +91,9 @@ export async function prepare() {
     context.fork &&
     context.fork_approved &&
     process.env.SLOP_APPROVED_FORKS === "true" &&
-    process.env.GITHUB_EVENT_NAME === "pull_request_target";
+    process.env.GITHUB_EVENT_NAME === "pull_request_target" &&
+    event.action === "labeled" &&
+    event.label?.name === "slop-review-approved";
   const modelAllowed =
     configuration.model_enabled &&
     (!context.fork || context.fork_review_allowed);
@@ -210,6 +212,34 @@ export async function listSources({ query = "", snapshot = "head" }) {
     paths: matches.slice(0, 100).map((item) => item.path),
     truncated: tree.truncated || matches.length > 100,
   };
+}
+
+export async function checkAssessment({ assessment }) {
+  requireThat(
+    typeof assessment === "string" && assessment.length <= 150_000,
+    "Assessment draft must be a bounded JSON string",
+  );
+  let draft;
+  try {
+    draft = JSON.parse(assessment);
+  } catch {
+    return { valid: false, error: "Assessment draft is not valid JSON" };
+  }
+  try {
+    const context = await load("context");
+    context.reads = await load("reads");
+    const api = client();
+    await validateAssessment(draft, context, (path, snapshot) =>
+      api.read(
+        path,
+        context.identity[`${snapshot}_sha`],
+        context.configuration,
+      ),
+    );
+    return { valid: true };
+  } catch (error) {
+    return { valid: false, error: redact(error.message).slice(0, 1000) };
+  }
 }
 
 export async function finalise() {

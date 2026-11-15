@@ -11,42 +11,43 @@ rubric-based indices, not percentages of AI-generated or defective code.
 
 ```mermaid
 flowchart TD
-    PR[Open or updated PR / manual run] --> Installed{Helpers installed on trusted default branch?}
-    Installed -->|No| Bootstrap[Skip with installation summary]
-    Installed -->|Yes| Scope[Trusted inventory: freeze head and base SHAs]
-    Scope --> Evidence[Validate optional commit-bound CI evidence]
-    Evidence --> Mode{Model explicitly enabled and same-repository PR?}
-    Mode -->|No| Inventory[Deterministic inventory and exact duplicate candidates]
-    Mode -->|Yes| Judge[Sandboxed Copilot: bounded source reads and path discovery]
+    PR[PR event in trusted base workflow] --> Fork{Fork PR?}
+    Fork -->|Yes| Approved{Maintainer applies approval label?}
+    Approved -->|No| Stop[Skip model review]
+    Approved -->|Yes| Runtime[Load helpers from pinned workflow revision]
+    Fork -->|No| Runtime
+    Runtime --> Scope[Freeze PR head and base; collect scoped source metadata]
+    Scope --> Judge[Sandboxed Copilot: bounded source reads and path discovery]
     Judge --> Detection{Explicit successful threat-detection verdict?}
     Detection -->|No| Reject[Fail closed: no model report]
     Detection -->|Yes| Validate[Separate safe-output job: validate source evidence and coverage]
-    Inventory --> Score[Mechanical aggregation and compatible historical drift]
-    Validate --> Score
-    Score --> Head{Still current PR head and base?}
+    Validate --> Score[Mechanical aggregation and compatible historical drift]
+    Score --> Head{PR still open, current, and approved?}
     Head -->|Yes| Comment[Update one advisory PR comment]
     Head -->|No| Skip[Skip comment publication]
     Score --> Reports[JSON artifact, Markdown summary, job outputs]
     Comment --> Human[Maintainer reviews and optionally posts copyable Copilot request]
 ```
 
-1. **Inventory** queries the GitHub API using trusted default-branch helpers. It
+1. **Runtime** loads helpers from the same pinned revision as the reusable
+   workflow. The caller does not check out or execute PR code.
+2. **Inventory** queries the GitHub API using those trusted helpers. It
    freezes the PR head/base, lists changes and exclusions, validates optional CI
    evidence, and retrieves available report history. It never checks out or runs
    proposed code.
-2. **Analysis** either stays deterministic or uses gh-aw's native Copilot engine.
+3. **Analysis** uses gh-aw's native Copilot engine.
    The judge gets only custom path-discovery, source-range, and context tools,
    with shell, editing, built-in GitHub tools, and general outbound access disabled.
    Source-byte reservations and read coverage use shared, atomic state across
    MCP subprocesses; concurrent tool calls cannot reset the one-megabyte budget.
-3. **Validation** runs separately from the judge. Exact excerpts must match
+4. **Validation** runs separately from the judge. Exact excerpts must match
    immutable source ranges, findings must overlap changed code, and reviewed
    modules must have been fully read. Missed reuse also requires a base utility
    and compatibility explanation.
-4. **Scoring** averages available non-drift families only when at least three
+5. **Scoring** averages available non-drift families only when at least three
    are assessable. Missing evidence is N/A, never a clean score. Compatible prior
    report artifacts provide per-family drift.
-5. **Publication** rechecks the open PR head/base and updates one bot-authored report
+6. **Publication** rechecks the open PR head/base and updates one bot-authored report
    comment. Artifacts and summaries remain available when comments cannot be
    posted. Human-readable reports include a copyable, non-automatic Copilot
    feedback request where appropriate.
@@ -80,8 +81,59 @@ assessable families there is no overall index.
 
 ## Install
 
-Requires GitHub.com Actions, Node.js 24 on the runner, and **gh-aw v1.0.1** for
-workflow compilation. No production npm dependencies are needed by the helpers.
+The reusable workflow requires GitHub.com Actions, runner version 2.336.0 or
+later, and a Copilot-enabled account. It is not part of the existing `v0.1.0`
+release. Once released, pin the complete workflow to its release tag or,
+preferably, its immutable commit SHA:
+
+```yaml
+name: PR slop assessment
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, labeled]
+permissions:
+  actions: read
+  checks: read
+  contents: read
+  issues: write
+  pull-requests: write
+jobs:
+  assessment:
+    uses: digimangos/ai-slop-assessment/.github/workflows/assess.yml@<RELEASE_COMMIT_SHA>
+    with:
+      model: gpt-5.3-codex
+    secrets:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+```
+
+Save this caller on the trusted base branch; do not check out or execute PR
+code in it. Set `COPILOT_GITHUB_TOKEN` to a fine-grained PAT with account
+permission **Copilot Requests: read** and a Copilot-enabled user. It is used for
+model inference, not as the repository write token. Model use incurs Copilot
+usage and is subject to the account's plan and billing limits. Choose a model
+available to that account; the example is not guaranteed to be available.
+
+Same-repository PRs are reviewed automatically. To review a fork PR, create and
+apply the `slop-review-approved` label as a maintainer. Only the label-add event
+authorises a review of the current head; reapply the label after new commits.
+The workflow rechecks approval and PR SHAs before commenting. This limits
+untrusted contributors' ability to trigger model spending and privileged
+reviews; restrict who can apply labels and protect the workflow and base
+branches. `pull_request_target` runs with base-repository privileges, so never
+add steps that check out or run PR code. Review GitHub's applicable event policy
+before enabling it. Model output and retrieved PR text remain untrusted; gh-aw
+threat detection and source-grounded validation gate publication, but cannot
+guarantee immunity to prompt injection.
+
+The workflow is experimental; an overall score is N/A when coverage or evidence
+is insufficient. Fork support and real-model reliability require evaluation in
+your own environment before using the results as a decision-making gate.
+
+### Legacy v0.1.0 bundle
+
+The existing release uses the original vendored workflow. Requires GitHub.com
+Actions, Node.js 24 on the runner, and **gh-aw v1.0.1** for workflow compilation.
+No production npm dependencies are needed by the helpers.
 
 For pinned installation, use an **exact semver release** such as `v0.1.0` and
 verify its archive checksum, source commit, and per-file manifest before copying.
@@ -126,8 +178,8 @@ To opt into model-assisted review:
    twelve turns, not a twelve-model-call or fixed-token guarantee.
 4. Set repository variable `SLOP_MODEL_ENABLED` to `true`.
 
-Fork PRs use the deterministic workflow and do not post comments. The initial
-implementation deliberately **does not enable privileged model review of forks**.
+In the legacy bundle, fork PRs use the deterministic workflow and do not post
+comments. That bundle deliberately **does not enable privileged model review of forks**.
 An authorised fork path remains future work; do not use `pull_request_target`
 to check out or execute proposed code.
 
@@ -222,9 +274,11 @@ npm test
 npm run format:check
 gh aw compile slop-review --no-check-update --action-mode release \
   --action-tag 0627fdbe4beb5f3b71aa569f8d97150b87f2111a
+gh aw compile slop-public --no-check-update --action-mode release \
+  --action-tag 0627fdbe4beb5f3b71aa569f8d97150b87f2111a
 ```
 
-Commit the regenerated lock file alongside workflow edits. The runtime action
+Commit each regenerated lock file alongside workflow edits. The runtime action
 pin is the immutable gh-aw v1.0.1 commit. CI runs offline contracts and checks
 compilation freshness without invoking a paid model.
 

@@ -84,6 +84,17 @@ steps:
       name: slop-context
       path: .slop/
 mcp-scripts:
+  check-assessment:
+    description: Validate a candidate assessment draft against immutable source and coverage before publication.
+    inputs:
+      assessment:
+        type: string
+        required: true
+    env:
+      GH_TOKEN: ${{ github.token }}
+    script: |
+      const { checkAssessment } = await import(process.env.RUNNER_TEMP + "/slop-runtime/runtime.mjs");
+      return await checkAssessment(inputs);
   review-context:
     description: Read the fixed assessment scope, PR requirements, CI evidence, and coverage checklist.
     script: |
@@ -209,10 +220,14 @@ into the assessment.
    regression. CI failure alone is not PR-caused regression without comparable
    passing base evidence. Missed reuse must cite the existing base utility and
    explain signature, behaviour, error, and dependency compatibility.
-5. Submit exactly one `publish_assessment` request with an `assessment` JSON
-   string. Do not request other safe outputs. Use status `partial` if any eligible
-   source remains unreviewed or context/budgets are insufficient. Missing optional
-   CI/history alone is not partial. Do not invent unavailable measurements.
+5. Before publishing, call `check-assessment` with the complete draft as an
+   `assessment` JSON string. If validation fails, re-read the cited exact
+   source lines, fix the draft, and check again. Excerpts must preserve every
+   space, character, and line break exactly; do not reformat or retype code.
+   Submit exactly one `publish_assessment` request only after the check returns
+   `valid: true`. Do not request other safe outputs. Use status `partial` if any
+   eligible source remains unreviewed or context/budgets are insufficient.
+   Missing optional CI/history alone is not partial. Do not invent measurements.
 
 ## Draft contract
 

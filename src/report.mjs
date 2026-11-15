@@ -307,7 +307,7 @@ export async function validateAssessment(draft, context, readSource) {
       input.end_line <= lines.length &&
         lines.slice(input.start_line - 1, input.end_line).join("\n") ===
           excerpt,
-      "Evidence excerpt does not match the immutable source range",
+      `Evidence excerpt does not match ${input.snapshot} source ${JSON.stringify(filename)} lines ${input.start_line}-${input.end_line}`,
     );
     return {
       path: filename,

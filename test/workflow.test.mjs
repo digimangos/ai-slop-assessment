@@ -63,5 +63,10 @@ it("reuses the pinned workflow revision and keeps fork review on the trusted eve
     "mcpscripts",
     "safeoutputs",
   ]);
+  assert.ok(
+    manifest.mcp_servers
+      .find((server) => server.name === "mcpscripts")
+      .tools.includes("check-assessment"),
+  );
   assert.equal(manifest.threat_detection.mode, "enabled");
 });

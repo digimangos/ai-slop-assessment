@@ -142,6 +142,24 @@ it("runs inventory, controlled concurrent reads, validation and publication with
     ),
     findings: [],
   };
+  assert.deepEqual(
+    await runtime.checkAssessment({ assessment: JSON.stringify(draft) }),
+    {
+      valid: true,
+    },
+  );
+  assert.deepEqual(await runtime.checkAssessment({ assessment: "not JSON" }), {
+    valid: false,
+    error: "Assessment draft is not valid JSON",
+  });
+  const invalid = structuredClone(draft);
+  invalid.reviewed_files = [];
+  invalid.categories.redundancy.score = 0;
+  assert.equal(
+    (await runtime.checkAssessment({ assessment: JSON.stringify(invalid) }))
+      .valid,
+    false,
+  );
   await writeFile(
     environment.GH_AW_AGENT_OUTPUT,
     JSON.stringify({
@@ -225,6 +243,27 @@ it("runs inventory, controlled concurrent reads, validation and publication with
   assert.equal((await runtime.publish()).reason, "fork-read-only-report");
 
   pr.labels = [{ name: "slop-review-approved" }];
+  await writeFile(
+    environment.GITHUB_EVENT_PATH,
+    JSON.stringify({
+      pull_request: pr,
+      action: "synchronize",
+    }),
+  );
+  await writeFile(environment.GITHUB_OUTPUT, "");
+  await runtime.prepare();
+  assert.match(
+    await readFile(environment.GITHUB_OUTPUT, "utf8"),
+    /model_allowed=false/,
+  );
+  await writeFile(
+    environment.GITHUB_EVENT_PATH,
+    JSON.stringify({
+      pull_request: pr,
+      action: "labeled",
+      label: { name: "slop-review-approved" },
+    }),
+  );
   await writeFile(environment.GITHUB_OUTPUT, "");
   await runtime.prepare();
   assert.match(
