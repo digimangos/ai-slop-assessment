@@ -18,14 +18,16 @@ flowchart TD
     Fork -->|No| Runtime
     Runtime --> Scope[Freeze PR head and base; collect scoped source metadata]
     Scope --> Judge[Sandboxed Copilot: bounded source reads and path discovery]
-    Judge --> Detection{Explicit successful threat-detection verdict?}
+    Judge --> Draft[Check draft against source and coverage]
+    Draft -->|Repair if needed| Judge
+    Draft -->|Valid| Detection{Explicit successful threat-detection verdict?}
     Detection -->|No| Reject[Fail closed: no model report]
     Detection -->|Yes| Validate[Separate safe-output job: validate source evidence and coverage]
     Validate --> Score[Mechanical aggregation and compatible historical drift]
     Score --> Head{PR still open, current, and approved?}
     Head -->|Yes| Comment[Update one advisory PR comment]
     Head -->|No| Skip[Skip comment publication]
-    Score --> Reports[JSON artifact, Markdown summary, job outputs]
+    Score --> Reports[JSON artifact and Markdown summary]
     Comment --> Human[Maintainer reviews and optionally posts copyable Copilot request]
 ```
 
@@ -40,10 +42,10 @@ flowchart TD
    with shell, editing, built-in GitHub tools, and general outbound access disabled.
    Source-byte reservations and read coverage use shared, atomic state across
    MCP subprocesses; concurrent tool calls cannot reset the one-megabyte budget.
-4. **Validation** runs separately from the judge. Exact excerpts must match
-   immutable source ranges, findings must overlap changed code, and reviewed
-   modules must have been fully read. Missed reuse also requires a base utility
-   and compatibility explanation.
+4. **Validation** checks a draft before submission and again in a separate
+   publishing job. Exact excerpts must match immutable source ranges, findings
+   must overlap changed code, and reviewed modules must have been fully read.
+   Missed reuse also requires a base utility and compatibility explanation.
 5. **Scoring** averages available non-drift families only when at least three
    are assessable. Missing evidence is N/A, never a clean score. Compatible prior
    report artifacts provide per-family drift.
@@ -79,12 +81,58 @@ correctness family, but do not imply untested correctness. Failed checks are
 reported as failures, not automatically PR-caused regressions. Without enough
 assessable families there is no overall index.
 
-## Install
+## Install the reusable workflow
 
-The reusable workflow requires GitHub.com Actions, runner version 2.336.0 or
-later, and a Copilot-enabled account. It is not part of the existing `v0.1.0`
-release. Once released, pin the complete workflow to its release tag or,
-preferably, its immutable commit SHA:
+The reusable workflow runs as a **job**, not as a step-level action. It requires
+GitHub.com Actions, runner version 2.336.0 or later, and a Copilot-enabled
+account. The consuming repository must be able to access this repository and
+its Actions policy must permit the referenced workflows and actions.
+
+The reusable workflow is not part of the existing `v0.1.0` release. Once it is
+released and accessible to your repository, pin it to the release's immutable
+commit SHA.
+
+### Choose authentication
+
+| Your setup                                                                             | How to run the reusable workflow                                                                                                                                                   |
+| -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A user has an organisation-provided Copilot seat                                       | Use that user's fine-grained PAT. Confirm the account's entitlement, usage limits and billing with your organisation.                                                              |
+| Central organisation billing is unavailable, but a user has their own Copilot access   | Use that user's fine-grained PAT. Usage follows that account's plan and billing settings.                                                                                          |
+| You want organisation-billed inference using the Actions `GITHUB_TOKEN`, without a PAT | **Not supported by the reusable workflow yet.** Adding `copilot-requests: write` to the caller alone does not change its compiled authentication mode.                             |
+| No user has Copilot access                                                             | The reusable model workflow cannot run. The [legacy bundle](#legacy-v010-bundle) has a deterministic inventory, but it does not produce an equivalent model rating and PR comment. |
+
+The PAT authenticates **model inference**. The workflow uses the separate,
+short-lived Actions `GITHUB_TOKEN` for repository reads and the PR comment.
+Never put a PAT in a workflow file, PR, or commit.
+
+GitHub Agentic Workflows also supports
+[organisation-billed inference without a PAT](https://github.github.com/gh-aw/reference/auth/#copilot-requests-write-permission)
+when configured and compiled for `copilot-requests: write`. That is a different
+authentication mode from this reusable workflow; it requires an eligible
+organisation subscription and policy, and is not enabled by this release.
+
+### 1. Configure the Copilot secret
+
+1. Choose an account with Copilot access and a model available to that account.
+   Check its plan, organisation policies, and usage or spending limits.
+2. Create a [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new?name=COPILOT_GITHUB_TOKEN&user_copilot_requests=read)
+   owned by that **user account**, with **Account permissions > Copilot
+   Requests: Read**. Set an appropriate expiry.
+3. In the consuming repository, open **Settings > Secrets and variables >
+   Actions** and add the token as `COPILOT_GITHUB_TOKEN`. Alternatively, make
+   an organisation secret with that name available to the repository.
+4. Rotate the secret before it expires or if the account's access changes.
+
+See the [gh-aw authentication reference](https://github.github.com/gh-aw/reference/auth/#copilot_github_token)
+for current token requirements. The model and threat-detection runs consume
+Copilot usage; charges and limits depend on the account and its billing setup.
+
+### 2. Add the caller
+
+Create `.github/workflows/slop-assessment.yml` on the consuming repository's
+trusted default branch. Replace `<RELEASE_COMMIT_SHA>` with the full SHA of a
+released revision that contains the reusable workflow, and select an available
+model:
 
 ```yaml
 name: PR slop assessment
@@ -106,16 +154,24 @@ jobs:
       COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
 ```
 
-Save this caller on the trusted base branch; do not check out or execute PR
-code in it. Set `COPILOT_GITHUB_TOKEN` to a fine-grained PAT with account
-permission **Copilot Requests: read** and a Copilot-enabled user. It is used for
-model inference, not as the repository write token. Model use incurs Copilot
-usage and is subject to the account's plan and billing limits. Choose a model
-available to that account; the example is not guaranteed to be available.
+The caller's permissions are the maximum available to nested jobs; retain
+`checks: read` as well as the other listed permissions. Do not add steps that
+check out or execute PR code in this privileged workflow. The example model
+is not guaranteed to be available to every account.
 
-Same-repository PRs are reviewed automatically. To review a fork PR, create and
-apply the `slop-review-approved` label as a maintainer. Only the label-add event
-authorises a review of the current head; reapply the label after new commits.
+### 3. Review a pull request
+
+Open or update a same-repository PR after the caller is on the default branch.
+In **Actions**, open the `PR slop assessment` run to inspect its jobs and
+artifacts. A successful assessment updates one bot-authored PR comment with the
+overall index, category scores, evidence, and limitations; the `slop-pr-*`
+artifact contains `report.json` and `report.md`. An overall index may be N/A
+when coverage or evidence is insufficient. The index is not an estimate of
+AI authorship.
+
+To review a fork PR, create and apply the `slop-review-approved` label as a
+maintainer. Only the label-add event authorises a review of the current head;
+remove and reapply the label after new commits.
 The workflow rechecks approval and PR SHAs before commenting. This limits
 untrusted contributors' ability to trigger model spending and privileged
 reviews; restrict who can apply labels and protect the workflow and base
@@ -125,9 +181,22 @@ before enabling it. Model output and retrieved PR text remain untrusted; gh-aw
 threat detection and source-grounded validation gate publication, but cannot
 guarantee immunity to prompt injection.
 
-The workflow is experimental; an overall score is N/A when coverage or evidence
-is insufficient. Fork support and real-model reliability require evaluation in
-your own environment before using the results as a decision-making gate.
+The workflow is experimental. Fork support has automated boundary tests but has
+not yet been demonstrated with a real fork PR. Evaluate reliability in your own
+environment; do not make the assessment a required merge check.
+
+### Troubleshooting
+
+- **Workflow cannot be found:** verify the SHA contains the reusable workflow,
+  the source repository is accessible, and your Actions policy allows it.
+- **Inference fails:** verify the secret is available to the caller, the PAT is
+  unexpired and has Copilot Requests permission, and its owner can use the
+  chosen model. Check applicable Copilot policies and usage limits.
+- **No comment:** inspect the run's jobs and annotations. Unapproved fork
+  events, stale PR snapshots, insufficient access, or rejected validation can
+  prevent publication; a successful run alone does not guarantee a comment.
+- **N/A score:** inspect the category explanations and coverage in the report.
+  Missing execution evidence, for example, leaves correctness unassessed.
 
 ### Legacy v0.1.0 bundle
 
@@ -188,7 +257,10 @@ Duplicate completed inputs are skipped where compatible artifact history is
 available. Historical lookup is bounded to thirty recent report artifacts and
 ten pages of comments; missing history leaves drift unavailable.
 
-## Optional configuration and CI results
+## Legacy bundle: optional configuration and CI results
+
+The following variables and setup apply to the vendored legacy workflows. The
+reusable workflow above does not currently expose these settings as inputs.
 
 Set `SLOP_CONFIG_PATH` to a trusted JSON configuration file:
 
@@ -282,9 +354,8 @@ Commit each regenerated lock file alongside workflow edits. The runtime action
 pin is the immutable gh-aw v1.0.1 commit. CI runs offline contracts and checks
 compilation freshness without invoking a paid model.
 
-This is the **initial implementation**, not an evaluated production judge.
-The approved specification also calls for multilingual real-model evaluation,
-authorised fork model review, richer bounded retrieval, and robust end-to-end
-validation in GitHub. Those are not claimed complete here. Automated remediation
-remains disabled until a supported trigger mechanism and the specification's
-six-ecosystem precision/stability acceptance gates have been verified.
+This is an experimental implementation, not an evaluated production judge.
+Multilingual real-model evaluation and a live fork demonstration remain
+outstanding. Automated remediation remains disabled until a supported trigger
+mechanism and the specification's six-ecosystem precision/stability acceptance
+gates have been verified.
