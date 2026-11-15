@@ -87,8 +87,16 @@ export async function prepare() {
     configuration,
     evidence,
   });
-  // Fork reviews never inherit model enablement from repository-wide settings.
-  const modelAllowed = configuration.model_enabled && !context.fork;
+  context.fork_review_allowed =
+    context.fork &&
+    context.fork_approved &&
+    process.env.SLOP_APPROVED_FORKS === "true" &&
+    process.env.GITHUB_EVENT_NAME === "pull_request_target" &&
+    event.action === "labeled" &&
+    event.label?.name === "slop-review-approved";
+  const modelAllowed =
+    configuration.model_enabled &&
+    (!context.fork || context.fork_review_allowed);
   const candidateFiles = [];
   for (const file of context.scope.filter((f) => !f.exclusion).slice(0, 20)) {
     try {
@@ -206,6 +214,34 @@ export async function listSources({ query = "", snapshot = "head" }) {
   };
 }
 
+export async function checkAssessment({ assessment }) {
+  requireThat(
+    typeof assessment === "string" && assessment.length <= 150_000,
+    "Assessment draft must be a bounded JSON string",
+  );
+  let draft;
+  try {
+    draft = JSON.parse(assessment);
+  } catch {
+    return { valid: false, error: "Assessment draft is not valid JSON" };
+  }
+  try {
+    const context = await load("context");
+    context.reads = await load("reads");
+    const api = client();
+    await validateAssessment(draft, context, (path, snapshot) =>
+      api.read(
+        path,
+        context.identity[`${snapshot}_sha`],
+        context.configuration,
+      ),
+    );
+    return { valid: true };
+  } catch (error) {
+    return { valid: false, error: redact(error.message).slice(0, 1000) };
+  }
+}
+
 export async function finalise() {
   requireThat(
     process.env.GH_AW_DETECTION_CONCLUSION === "success",
@@ -251,8 +287,18 @@ export async function publish(input) {
     await output(key, value);
   const context = await load("context");
   if (context.fork) {
-    await output("publication_status", "skipped");
-    return { status: "skipped", reason: "fork-read-only-report" };
+    if (
+      !context.fork_review_allowed ||
+      process.env.GITHUB_EVENT_NAME !== "pull_request_target"
+    ) {
+      await output("publication_status", "skipped");
+      return { status: "skipped", reason: "fork-read-only-report" };
+    }
+    const pr = await client().pr(report.identity.pr, { requireOpen: false });
+    if (!pr.labels?.some((label) => label.name === "slop-review-approved")) {
+      await output("publication_status", "skipped");
+      return { status: "skipped", reason: "fork-approval-removed" };
+    }
   }
   const result = await client().publish(
     report,

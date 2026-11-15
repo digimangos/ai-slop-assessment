@@ -1,0 +1,12 @@
+name: Prepare assessment runtime
+description: Copy trusted runtime files from the same pinned revision as the workflow.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        ACTION_DIRECTORY: ${{ github.action_path }}
+      run: |
+        mkdir -p "$RUNNER_TEMP/slop-runtime/.github/workflows"
+        cp "$ACTION_DIRECTORY"/../../../src/*.mjs "$RUNNER_TEMP/slop-runtime/"
+        cp "$ACTION_DIRECTORY"/../../../.github/workflows/slop-public.md "$ACTION_DIRECTORY"/../../../.github/workflows/slop-public.lock.yml "$RUNNER_TEMP/slop-runtime/.github/workflows/"

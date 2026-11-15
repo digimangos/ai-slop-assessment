@@ -202,6 +202,9 @@ export class GitHub {
       requirements: redact((pr.body ?? "").slice(0, 20_000)),
       fork:
         pr.head.repo?.full_name.toLowerCase() !== this.repository.toLowerCase(),
+      fork_approved: (current.labels ?? []).some(
+        (label) => label.name === "slop-review-approved",
+      ),
     };
     context.input_key = fingerprint({
       identity,
@@ -295,6 +298,7 @@ export class GitHub {
       if (
         ![
           ".github/workflows/slop-review.lock.yml",
+          ".github/workflows/assess.yml",
           ".github/workflows/slop-inventory.yml",
         ].includes(run.path) ||
         run.repository.full_name.toLowerCase() !==
