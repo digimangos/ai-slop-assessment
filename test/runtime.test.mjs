@@ -20,6 +20,8 @@ it("runs inventory, controlled concurrent reads, validation and publication with
     GITHUB_RUN_ID: "123",
     GH_AW_AGENT_OUTPUT: `${directory}/agent.json`,
     GH_AW_DETECTION_CONCLUSION: "success",
+    GITHUB_EVENT_NAME: "pull_request",
+    SLOP_APPROVED_FORKS: "false",
   };
   for (const [key, value] of Object.entries(environment)) {
     const previous = process.env[key];
@@ -205,4 +207,40 @@ it("runs inventory, controlled concurrent reads, validation and publication with
   const forkResult = await runtime.publish();
   assert.equal(forkResult.reason, "fork-read-only-report");
   assert.equal(published, undefined);
+
+  pr.head.repo.full_name = "contributor/project";
+  pr.labels = [];
+  process.env.GITHUB_EVENT_NAME = "pull_request_target";
+  process.env.SLOP_APPROVED_FORKS = "true";
+  await writeFile(
+    environment.GITHUB_EVENT_PATH,
+    JSON.stringify({ pull_request: pr }),
+  );
+  await writeFile(environment.GITHUB_OUTPUT, "");
+  await runtime.prepare();
+  assert.match(
+    await readFile(environment.GITHUB_OUTPUT, "utf8"),
+    /model_allowed=false/,
+  );
+  assert.equal((await runtime.publish()).reason, "fork-read-only-report");
+
+  pr.labels = [{ name: "slop-review-approved" }];
+  await writeFile(environment.GITHUB_OUTPUT, "");
+  await runtime.prepare();
+  assert.match(
+    await readFile(environment.GITHUB_OUTPUT, "utf8"),
+    /model_allowed=true/,
+  );
+  assert.equal(
+    JSON.parse(await readFile(`${directory}/context.json`, "utf8"))
+      .fork_review_allowed,
+    true,
+  );
+  pr.labels = [];
+  assert.equal((await runtime.publish()).reason, "fork-approval-removed");
+  pr.labels = [{ name: "slop-review-approved" }];
+  publicationFails = false;
+  assert.equal((await runtime.publish()).status, "success");
+  process.env.GITHUB_EVENT_NAME = "pull_request";
+  assert.equal((await runtime.publish()).reason, "fork-read-only-report");
 });

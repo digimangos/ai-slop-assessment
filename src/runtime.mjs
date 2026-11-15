@@ -87,8 +87,14 @@ export async function prepare() {
     configuration,
     evidence,
   });
-  // Fork reviews never inherit model enablement from repository-wide settings.
-  const modelAllowed = configuration.model_enabled && !context.fork;
+  context.fork_review_allowed =
+    context.fork &&
+    context.fork_approved &&
+    process.env.SLOP_APPROVED_FORKS === "true" &&
+    process.env.GITHUB_EVENT_NAME === "pull_request_target";
+  const modelAllowed =
+    configuration.model_enabled &&
+    (!context.fork || context.fork_review_allowed);
   const candidateFiles = [];
   for (const file of context.scope.filter((f) => !f.exclusion).slice(0, 20)) {
     try {
@@ -251,8 +257,18 @@ export async function publish(input) {
     await output(key, value);
   const context = await load("context");
   if (context.fork) {
-    await output("publication_status", "skipped");
-    return { status: "skipped", reason: "fork-read-only-report" };
+    if (
+      !context.fork_review_allowed ||
+      process.env.GITHUB_EVENT_NAME !== "pull_request_target"
+    ) {
+      await output("publication_status", "skipped");
+      return { status: "skipped", reason: "fork-read-only-report" };
+    }
+    const pr = await client().pr(report.identity.pr, { requireOpen: false });
+    if (!pr.labels?.some((label) => label.name === "slop-review-approved")) {
+      await output("publication_status", "skipped");
+      return { status: "skipped", reason: "fork-approval-removed" };
+    }
   }
   const result = await client().publish(
     report,

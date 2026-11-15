@@ -1,0 +1,46 @@
+name: Reusable PR slop assessment
+on:
+  workflow_call:
+    inputs:
+      model:
+        description: Copilot model identifier
+        required: false
+        default: gpt-5.3-codex
+        type: string
+    secrets:
+      COPILOT_GITHUB_TOKEN:
+        required: true
+permissions: {}
+jobs:
+  runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Require trusted PR event
+        shell: bash
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" != "pull_request_target" ]]; then
+            echo "::error::Call this workflow only from pull_request_target."
+            exit 1
+          fi
+      - uses: $/.github/actions/bootstrap
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: slop-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/slop-runtime/
+          if-no-files-found: error
+          retention-days: 1
+  assessment:
+    needs: runtime
+    uses: $/.github/workflows/slop-public.lock.yml
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+      pull-requests: write
+    with:
+      model: ${{ inputs.model }}
+    secrets:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
