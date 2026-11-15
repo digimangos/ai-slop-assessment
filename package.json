@@ -1,6 +1,6 @@
 {
   "name": "ai-slop-rating",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -9,8 +9,6 @@
   "scripts": {
     "test": "node --test",
     "check": "node --check src/report.mjs && node --check src/github.mjs && node --check src/runtime.mjs && node --check src/state.mjs && node --check scripts/release.mjs",
-    "release:pack": "node scripts/release.mjs pack",
-    "release:verify": "node scripts/release.mjs verify",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

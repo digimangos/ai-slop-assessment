@@ -4,7 +4,7 @@ import { it } from "node:test";
 
 it("compiles only the bounded source tools and validated publication output", async () => {
   const lock = await readFile(
-    new URL("../.github/workflows/slop-review.lock.yml", import.meta.url),
+    new URL("../.github/workflows/slop-public.lock.yml", import.meta.url),
     "utf8",
   );
   const manifest = JSON.parse(lock.match(/^# gh-aw-manifest: (.+)$/m)[1]);
@@ -14,7 +14,7 @@ it("compiles only the bounded source tools and validated publication output", as
   ]);
   assert.deepEqual(
     manifest.mcp_servers.find((server) => server.name === "mcpscripts").tools,
-    ["list-sources", "read-source", "review-context"],
+    ["check-assessment", "list-sources", "read-source", "review-context"],
   );
   const outputs = manifest.mcp_servers.find(
     (server) => server.name === "safeoutputs",

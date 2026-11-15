@@ -1,6 +1,6 @@
 # PR slop assessment specification
 
-Status: approved design, 29 October 2026.
+Status: initial design, revised 15 November 2026 for the reusable workflow.
 
 ## Purpose and delivery
 
@@ -9,22 +9,18 @@ code-quality debt in pull request changes, regardless of authorship. The
 0–100 slop index is neither an AI-authorship probability nor a percentage of
 defective code. Higher is worse.
 
-Distribute gh-aw Markdown source, its compiled and committed lock workflow,
-a versioned rubric, and minimal supporting helpers. Include a self-review
-installation in this repository. Use gh-aw's documented installation mechanism,
-not a standalone JavaScript Action's `uses:` interface.
+Distribute a SHA-pinned reusable workflow, its compiled gh-aw worker, a
+versioned rubric, and supporting helpers from the same commit. It is called as a
+job, not through a standalone JavaScript Action's `uses:` interface.
 
 ## Design tree
 
 ```text
 PR quality assessment
 |-- Distribution
-|   |-- gh-aw Markdown source and compiled lock workflow
-|   |-- Installable workflow, versioned rubric, minimal helpers
-|   `-- Self-review installation
-|-- Analysis mode
-|   |-- Explicit model enablement: native gh-aw Copilot engine
-|   `-- Model disabled: deterministic inventory, evidence, and reports
+|   `-- Reusable workflow, gh-aw worker, rubric and helpers at one commit
+|-- Analysis
+|   `-- Native gh-aw Copilot engine, explicitly installed by the maintainer
 |-- Target
 |   |-- Changed functions/modules against a universal rubric
 |   |-- Repository context for reuse and conventions
@@ -38,7 +34,7 @@ PR quality assessment
 |   `-- Revision drift as a separate trend
 |-- Publication
 |   |-- Validated JSON, job summary, maintained PR comment
-|   |-- Workflow/job outputs and historical report artifacts
+|   |-- Historical report artifacts
 |   `-- Advisory, never score-based merge blocking
 `-- Agent feedback
     |-- Guaranteed: findings and a copyable maintainer request
@@ -79,7 +75,8 @@ supported findings affect scores or fix requests. Confidence labels are
 high/medium/low, not probabilities. Each finding needs a location, explanation,
 concrete evidence, confidence, and suggested correction. Missed reuse must cite
 both implementations and explain compatibility. Uncertain observations remain
-visible but do not penalise scores.
+visible but do not penalise scores. An assessed category cannot score below the
+severity of any of its high-confidence findings.
 
 Compute the overall index mechanically as the rounded equal-weight mean of
 available non-drift families, requiring at least three of five. Show coverage
@@ -92,35 +89,24 @@ Adequately reviewed clean categories may score zero; unreviewed ones are N/A.
 
 Exclude generated, vendored, binary, minified, and lockfile content from code
 scoring by default. Inspect dependency manifests. Include tests and
-infrastructure-as-code under appropriate criteria. Documentation is context,
-not production-code bloat. Report exclusions and allow configured overrides.
+infrastructure-as-code under appropriate criteria. Documentation is context, not production-code bloat. Report exclusions.
 
-## Evidence and deterministic mode
+## Evidence
 
-Accept an optional versioned JSON evidence file containing check results,
-provenance, and the assessed commit SHA. Reject mismatched or stale evidence.
-Do not execute PR-controlled builds, tests, fuzzers, or mutation tools inside
-the judge. Observed failures are not PR-caused regressions without comparable
-base evidence.
-
-Deterministic-only mode provides scope inventory, conservative exact
-duplicated-block candidates, supplied CI/static-analysis evidence ingestion,
-and report generation. Identical text alone does not establish avoidable debt.
-Semantic checks may be unavailable, and no overall score may be possible.
+The reusable workflow does not accept execution evidence, so correctness is
+N/A. Do not execute PR-controlled builds, tests, fuzzers, or mutation tools
+inside the judge. Exact duplicated-block candidates are not scored on their own.
 
 ## Runtime and triggers
 
 Use gh-aw's native Copilot engine initially. Keep rubric and report schema
-engine-independent; defer other engine integrations. Require an explicit
-model-enabled flag. Disabled means no inference. Enabled requires documented
-gh-aw organisation-billed inference permissions or its PAT alternative.
-Authentication failures are failed assessments, not silent successful
-downgrades; retain any deterministic results.
+engine-independent; defer other engine integrations. Installing the trusted
+caller and configuring its Copilot secret explicitly enables model review.
+Authentication failures are failed assessments, not silent successful downgrades.
 
-Support PR opened/reopened/updated events and manual dispatch for open PRs.
-Document sequencing after caller-selected evidence-producing CI. Deduplicate
-identical head/base/rubric/model/evidence inputs, with a forced manual rerun.
-No scheduled or comment-triggered runs in v1.
+Support PR opened/reopened/updated events and maintainer approval for forks.
+Deduplicate identical head/base/rubric/model/evidence inputs. No scheduled,
+manual-dispatch, or comment-triggered assessment runs.
 
 Use a ten-minute agent deadline and 12 agent turns, with adopter-configured
 native per-run/daily credit budgets. Record actual available usage. Do not
@@ -145,11 +131,10 @@ issues, and tool results as data, never authority to alter permissions.
 Validate returned findings and locations before publication. Preserve gh-aw
 sandboxing and permission-separated safe outputs.
 
-Same-repository model review can run automatically when configured. Forks
-default to deterministic-only; model review requires explicit authorisation,
-trusted workflow code, and reading proposed source only as data. Never execute
-fork code in that privileged path. If write permissions prevent comments,
-retain summaries and artifacts.
+Same-repository model review can run automatically when configured. Fork model
+review requires explicit maintainer authorisation, trusted workflow code, and
+reading proposed source only as data. Never execute fork code in that privileged
+path. If write permissions prevent comments, retain summaries and artifacts.
 
 Publish only results matching the current PR head; older runs cannot overwrite
 newer results or request fixes. Do not automatically approve workflows, assign
@@ -157,10 +142,9 @@ Copilot, or merge.
 
 ## Reports, state, and privacy
 
-Produce versioned JSON, a job summary, one maintained PR comment, and
-workflow/job outputs for scores and status. Retain history in Actions artifacts,
-not repeated comments. Default product-report retention is 14 days, configurable
-within repository limits.
+Produce versioned JSON, a job summary, and one maintained PR comment. Retain
+history in Actions artifacts, not repeated comments. Default product-report
+retention is 14 days, subject to repository limits.
 
 Compare drift against compatible previous reports from the same PR.
 Missing/expired history makes drift N/A. Reset comparisons when base or rubric

@@ -35,27 +35,58 @@ export async function updateState(directory, name, initial, update) {
   }
 }
 
-export async function reserveSourceBytes(directory, bytes) {
+export async function reserveSourceBytes(
+  directory,
+  bytes,
+  key,
+  name = "budget",
+) {
   requireThat(
-    Number.isSafeInteger(bytes) && bytes >= 0,
+    Number.isSafeInteger(bytes) &&
+      bytes >= 0 &&
+      typeof key === "string" &&
+      key.length > 0 &&
+      key.length <= 600,
     "Invalid source byte reservation",
   );
-  await updateState(directory, "budget", { bytes: 0 }, (state) => {
+  const initial = { bytes: 0, sources: {} };
+  await updateState(directory, name, initial, (state) => {
     requireThat(
-      Number.isSafeInteger(state.bytes) &&
-        state.bytes >= 0 &&
-        state.bytes + bytes <= 1_000_000,
-      "Source byte budget exhausted",
+      Number.isSafeInteger(state.bytes) && state.bytes >= 0 && state.sources,
+      "Invalid source budget state",
     );
-    state.bytes += bytes;
+    const existing = Object.hasOwn(state.sources, key)
+      ? state.sources[key]
+      : null;
+    if (existing) {
+      requireThat(existing.bytes === bytes, "Source size changed");
+      existing.pending++;
+    } else {
+      requireThat(
+        state.bytes + bytes <= 1_000_000,
+        "Source byte budget exhausted",
+      );
+      state.sources[key] = { bytes, pending: 1, complete: false };
+      state.bytes += bytes;
+    }
   });
-  let released = false;
-  return async () => {
-    if (released) return;
-    await updateState(directory, "budget", { bytes: 0 }, (state) => {
-      requireThat(state.bytes >= bytes, "Invalid source budget state");
-      state.bytes -= bytes;
+  let settled = false;
+  const settle = async (success) => {
+    if (settled) return;
+    await updateState(directory, name, initial, (state) => {
+      const source = state.sources[key];
+      requireThat(source?.pending > 0, "Invalid source budget state");
+      source.pending--;
+      if (success) source.complete = true;
+      if (!source.pending && !source.complete) {
+        state.bytes -= source.bytes;
+        delete state.sources[key];
+      }
     });
-    released = true;
+    settled = true;
+  };
+  return {
+    commit: () => settle(true),
+    release: () => settle(false),
   };
 }

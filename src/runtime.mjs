@@ -5,7 +5,6 @@ import { reserveSourceBytes, updateState } from "./state.mjs";
 import {
   CHECKLIST,
   compareHistory,
-  deterministicReport,
   duplicateCandidates,
   eligibility,
   redact,
@@ -18,16 +17,21 @@ import {
 const DIRECTORY =
   process.env.SLOP_DIRECTORY ||
   `${process.env.GITHUB_WORKSPACE || process.cwd()}/.slop`;
-let github;
+const clients = new Map();
 
-function client() {
-  github ??= new GitHub({
-    repository: process.env.GITHUB_REPOSITORY,
-    token: process.env.GH_TOKEN,
-    api: process.env.GITHUB_API_URL || "https://api.github.com",
-    reserveBytes: (bytes) => reserveSourceBytes(DIRECTORY, bytes),
-  });
-  return github;
+function client(budget = "budget") {
+  if (!clients.has(budget))
+    clients.set(
+      budget,
+      new GitHub({
+        repository: process.env.GITHUB_REPOSITORY,
+        token: process.env.GH_TOKEN,
+        api: process.env.GITHUB_API_URL || "https://api.github.com",
+        reserveBytes: (bytes, key) =>
+          reserveSourceBytes(DIRECTORY, bytes, key, budget),
+      }),
+    );
+  return clients.get(budget);
 }
 
 async function load(name) {
@@ -48,55 +52,33 @@ async function output(key, value) {
 }
 
 export async function prepare() {
+  requireThat(
+    process.env.GITHUB_EVENT_NAME === "pull_request_target",
+    "Assessment requires a trusted pull_request_target event",
+  );
   const event = JSON.parse(
     await readFile(process.env.GITHUB_EVENT_PATH, "utf8"),
   );
-  const number = Number(event.pull_request?.number ?? event.inputs?.pr_number);
-  const api = client();
-  const configuration = {
-    include: [],
-    exclude: [],
-    model_enabled: process.env.SLOP_MODEL_ENABLED === "true",
-  };
-  if (configuration.model_enabled)
-    requireThat(
-      typeof process.env.SLOP_MODEL === "string" &&
-        process.env.SLOP_MODEL.trim().length > 0,
-      "Set SLOP_MODEL to an explicit Copilot model before enabling model review",
-    );
-  if (process.env.SLOP_CONFIG) {
-    const config = JSON.parse(await readFile(process.env.SLOP_CONFIG, "utf8"));
-    for (const key of ["include", "exclude"]) {
-      requireThat(
-        Array.isArray(config[key] ?? []) &&
-          (config[key] ?? []).every(
-            (p) => typeof p === "string" && p.length <= 512,
-          ),
-        `Invalid ${key} patterns`,
-      );
-      configuration[key] = config[key] ?? [];
-    }
-  }
-  const evidence = process.env.SLOP_EVIDENCE
-    ? JSON.parse(await readFile(process.env.SLOP_EVIDENCE, "utf8"))
-    : null;
+  const number = Number(event.pull_request?.number);
+  const api = client("inventory-budget");
+  const configuration = { include: [], exclude: [] };
+  requireThat(
+    typeof process.env.SLOP_MODEL === "string" &&
+      process.env.SLOP_MODEL.trim().length > 0,
+    "Set SLOP_MODEL to an explicit Copilot model",
+  );
   const context = await api.prepare(number, {
-    model: configuration.model_enabled
-      ? process.env.SLOP_MODEL || "copilot-default"
-      : "disabled",
+    model: process.env.SLOP_MODEL,
     configuration,
-    evidence,
+    evidence: null,
   });
   context.fork_review_allowed =
     context.fork &&
     context.fork_approved &&
-    process.env.SLOP_APPROVED_FORKS === "true" &&
     process.env.GITHUB_EVENT_NAME === "pull_request_target" &&
     event.action === "labeled" &&
     event.label?.name === "slop-review-approved";
-  const modelAllowed =
-    configuration.model_enabled &&
-    (!context.fork || context.fork_review_allowed);
+  const modelAllowed = !context.fork || context.fork_review_allowed;
   const candidateFiles = [];
   for (const file of context.scope.filter((f) => !f.exclusion).slice(0, 20)) {
     try {
@@ -128,15 +110,19 @@ export async function prepare() {
       .map((f) => f.path),
     limit: 20,
   };
-  const previous = await api.history(number).catch(() => null);
-  const force = event.inputs?.force === true || event.inputs?.force === "true";
-  const duplicate = !force && previous?.input_key === context.input_key;
+  let previous = null;
+  try {
+    previous = await api.history(number, process.env.GITHUB_RUN_ID, {
+      model: context.model,
+      configuration: context.configuration,
+    });
+  } catch (error) {
+    console.warn(`Assessment history unavailable: ${redact(error.message)}`);
+  }
+  const duplicate = previous?.input_key === context.input_key;
   await save("reads", {});
   await save("context", context);
   if (previous) await save("previous", previous);
-  const report = compareHistory(deterministicReport(context), previous);
-  await save("report", report);
-  await writeFile(`${DIRECTORY}/report.md`, render(report));
   await output("pr_number", number);
   await output("head_sha", context.identity.head_sha);
   await output("model_allowed", modelAllowed);
@@ -312,11 +298,8 @@ export async function publish(input) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const command = process.argv[2];
   try {
-    requireThat(
-      ["prepare", "finalise", "publish"].includes(command),
-      "Unknown command",
-    );
-    await { prepare, finalise, publish }[command]();
+    requireThat(["prepare", "finalise"].includes(command), "Unknown command");
+    await { prepare, finalise }[command]();
   } catch (error) {
     // Error messages contain controlled diagnostics, not raw API/model payloads.
     console.error(redact(error.message));
