@@ -10,6 +10,9 @@ Each release contains:
 - `package.json`, optional `.github/aw/actions-lock.json`, and
   `release-manifest.json` with the exact source commit and per-file SHA256 hashes.
 
+Archives made from commits containing `LICENSE` include the ISC licence.
+Earlier archives without that file remain verifiable.
+
 The only published assets are `ai-slop-rating-vMAJOR.MINOR.PATCH.tar.gz` and
 `SHA256SUMS`. The archive contains regular files only: no dependencies, repository
 history, tests, release workflow, installer, or local working-tree changes.
@@ -101,7 +104,8 @@ tar -xzf release-download/ai-slop-rating-v0.1.0.tar.gz \
 After verification, manually copy **only** the three assessment workflow files,
 all `src/` modules, and optional `.github/aw/actions-lock.json` into the adopting
 repository at those same relative paths. Do not copy upstream `package.json`
-over the consumer's package manifest. Keep `release-manifest.json` as a pin
+over the consumer's package manifest. Retain the bundled `LICENSE` notice when
+redistributing the files. Keep `release-manifest.json` as a pin
 record (for example `.github/slop-release-manifest.json`). Inspect existing files
 and path collisions before copying; there is deliberately no overwrite installer
 or install hook, and extraction does not execute bundled code.

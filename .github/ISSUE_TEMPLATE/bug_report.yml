@@ -1,0 +1,25 @@
+name: Bug report
+description: Report a reproducible problem with the assessment workflow.
+body:
+  - type: markdown
+    attributes:
+      value: Do not include secrets or sensitive code. Report vulnerabilities using SECURITY.md.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the problem and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Include a minimal example and any relevant configuration.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment and relevant logs
+      description: Include the workflow version or commit, runner, model and redacted logs as applicable.

@@ -116,6 +116,7 @@ it("packages and verifies the complete committed bundle reproducibly", async () 
   assert.ok(payload.includes(".github/workflows/slop-review.md"));
   assert.ok(payload.includes(".github/workflows/slop-review.lock.yml"));
   assert.ok(payload.includes(".github/workflows/slop-inventory.yml"));
+  assert.ok(payload.includes("LICENSE"));
   assert.ok(!payload.includes(".github/workflows/release.yml"));
   await packRelease({
     ref: commit,

@@ -433,3 +433,9 @@ Multilingual real-model evaluation and a live fork demonstration remain
 outstanding. Automated remediation remains disabled until a supported trigger
 mechanism and the specification's six-ecosystem precision/stability acceptance
 gates have been verified.
+
+## Community
+
+See [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md),
+[SECURITY.md](SECURITY.md) and [SUPPORT.md](SUPPORT.md). This project is
+licensed under the [ISC License](LICENSE).

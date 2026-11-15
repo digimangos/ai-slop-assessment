@@ -16,7 +16,7 @@ const REQUIRED = [
   ".github/workflows/slop-inventory.yml",
   "src/runtime.mjs",
 ];
-const OPTIONAL = ".github/aw/actions-lock.json";
+const OPTIONAL = [".github/aw/actions-lock.json", "LICENSE"];
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
 function check(condition, message) {
@@ -26,7 +26,7 @@ function check(condition, message) {
 function allowedPath(path) {
   return (
     REQUIRED.includes(path) ||
-    path === OPTIONAL ||
+    OPTIONAL.includes(path) ||
     (/^src\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.mjs$/.test(path) &&
       !path.split("/").some((part) => part === "." || part === ".."))
   );
@@ -205,7 +205,7 @@ export async function packRelease({ ref, out, version, repo = process.cwd() }) {
     ".github/workflows/slop-review.lock.yml",
     ".github/workflows/slop-inventory.yml",
     "src",
-    OPTIONAL,
+    ...OPTIONAL,
   ])
     .toString()
     .split("\0")
