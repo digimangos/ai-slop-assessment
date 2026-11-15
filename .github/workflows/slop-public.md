@@ -32,6 +32,12 @@ tools:
   edit: false
   cli-proxy: false
 jobs:
+  activation:
+    pre-steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: slop-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ github.workspace }}
   inventory:
     runs-on: ubuntu-latest
     permissions:
