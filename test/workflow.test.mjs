@@ -70,3 +70,30 @@ it("reuses the pinned workflow revision and keeps fork review on the trusted eve
   );
   assert.equal(manifest.threat_detection.mode, "enabled");
 });
+
+it("uses the organisation token for both inference jobs without requiring a PAT", async () => {
+  const caller = await readFile(
+    new URL("../.github/workflows/assess-org.yml", import.meta.url),
+    "utf8",
+  );
+  const worker = await readFile(
+    new URL("../.github/workflows/slop-org.lock.yml", import.meta.url),
+    "utf8",
+  );
+  const manifest = JSON.parse(worker.match(/^# gh-aw-manifest: (.+)$/m)[1]);
+  assert.match(caller, /GITHUB_EVENT_NAME.*pull_request_target/);
+  assert.match(caller, /uses: \$\/\.github\/workflows\/slop-org\.lock\.yml/);
+  assert.match(caller, /copilot-requests: write/);
+  assert.ok(!caller.includes("COPILOT_GITHUB_TOKEN"));
+  for (const name of ["agent", "detection"]) {
+    const job = worker.split(`  ${name}:\n`)[1]?.split(/^  [\w-]+:\n/m)[0];
+    assert.ok(job, `Missing ${name} job`);
+    assert.match(job, /copilot-requests: write/);
+    assert.match(job, /COPILOT_GITHUB_TOKEN: \$\{\{ github\.token \}\}/);
+  }
+  assert.equal(manifest.threat_detection.mode, "enabled");
+  assert.deepEqual(manifest.mcp_servers.map((server) => server.name).sort(), [
+    "mcpscripts",
+    "safeoutputs",
+  ]);
+});

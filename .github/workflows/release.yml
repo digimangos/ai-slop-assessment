@@ -47,9 +47,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          node scripts/derive-org-workflow.mjs --check
           gh extension install github/gh-aw --pin v1.0.1
           gh aw compile slop-public --no-check-update --action-mode release --action-tag 0627fdbe4beb5f3b71aa569f8d97150b87f2111a
-          git diff --exit-code -- .github/workflows/slop-public.lock.yml
+          gh aw compile slop-org --no-check-update --action-mode release --action-tag 0627fdbe4beb5f3b71aa569f8d97150b87f2111a
+          git diff --exit-code -- .github/workflows/slop-public.lock.yml .github/workflows/slop-org.lock.yml
   publish:
     needs: validate
     runs-on: ubuntu-latest
