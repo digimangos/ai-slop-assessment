@@ -3,6 +3,18 @@
 An experimental **GitHub Agentic Workflow** for reviewing avoidable code-quality
 debt in pull requests, regardless of who wrote the code.
 
+This concept is intended to support human PR review by highlighting potentially
+sloppy changes before they are merged, not to replace a reviewer's judgement.
+It uses an **LLM-as-a-judge** approach: Copilot assesses the changes against a
+defined rubric and proposes findings and category scores. The workflow validates
+the evidence and calculates the overall index mechanically. The result is
+advisory and may miss issues or raise false positives.
+
+The assessment targets eligible files changed by the PR, not the repository as
+a whole. Copilot may read unchanged code and existing utilities for context, but
+findings must cite a head-side PR diff hunk; those hunks can include unchanged
+context lines. Deleted files are excluded from assessment.
+
 Scores range from **0 (no supported issues found) to 100 (worst)**. They are
 rubric-based indices, not percentages of AI-generated or defective code.
 [SPEC.md](SPEC.md) records the approved product design.
