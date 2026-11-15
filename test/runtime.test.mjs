@@ -160,6 +160,28 @@ it("runs inventory, controlled concurrent reads, validation and publication with
       .valid,
     false,
   );
+  const mismatched = structuredClone(draft);
+  mismatched.findings.push({
+    id: "mismatch",
+    family: "redundancy",
+    confidence: "high",
+    severity: "minor",
+    title: "Mismatch",
+    explanation: "Fixture evidence.",
+    correction: "Use the actual line.",
+    location: {
+      path: "src/main.js",
+      snapshot: "head",
+      start_line: 2,
+      end_line: 2,
+      excerpt: "export const answer =  42;",
+    },
+  });
+  const mismatchResult = await runtime.checkAssessment({
+    assessment: JSON.stringify(mismatched),
+  });
+  assert.equal(mismatchResult.valid, false);
+  assert.match(mismatchResult.error, /head source "src\/main\.js" lines 2-2/);
   await writeFile(
     environment.GH_AW_AGENT_OUTPUT,
     JSON.stringify({
